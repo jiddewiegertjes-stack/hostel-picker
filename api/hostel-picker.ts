@@ -61,9 +61,11 @@ export async function POST(req: Request) {
 
   } catch (error: any) {
     // Voorkom eeuwige 'thinking' door altijd een JSON error te sturen
-    return new Response(JSON.stringify({ message: "My compass is spinning! Let's try that again.", extractedContext: {} }), { 
-      status: 200, 
-      headers: { ...corsHeaders, "Content-Type": "application/json" } 
+// Haal JSON.stringify weg bij 'content'
+return new Response(content, {
+  status: 200,
+  headers: { ...corsHeaders, "Content-Type": "application/json" },
+});
     });
   }
 }
