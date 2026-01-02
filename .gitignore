@@ -1,0 +1,9 @@
+# Dependency directory
+node_modules
+# Build output
+.vercel
+dist
+build
+# Environment variables
+.env
+.env.local
