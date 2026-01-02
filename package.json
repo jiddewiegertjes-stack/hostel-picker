@@ -1,0 +1,17 @@
+{
+  "name": "country-picker-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo \"Vercel builds edge functions automatically\""
+  },
+  "dependencies": {
+    "openai": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "typescript": "^5.x"
+  }
+}
