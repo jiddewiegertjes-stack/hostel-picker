@@ -12,16 +12,49 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders });
 }
 
+/**
+ * Robust CSV Parser that handles quotes and commas inside fields
+ */
 function parseCSV(csvText: string) {
-  const lines = csvText.split("\n");
-  const headers = lines[0].split(",").map(h => h.trim());
-  return lines.slice(1).map(line => {
-    const values = line.split(",");
-    return headers.reduce((obj: any, header, i) => {
-      obj[header] = values[i]?.trim();
-      return obj;
-    }, {});
-  });
+  const lines = csvText.split(/\r?\n/);
+  if (lines.length === 0) return [];
+  
+  // Clean headers (remove colons and trim)
+  const headers = lines[0].split(",").map(h => h.trim().replace(":", ""));
+  const result = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
+    const values = [];
+    let current = "";
+    let inQuotes = false;
+
+    for (let char of line) {
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+
+    const obj: any = {};
+    headers.forEach((header, index) => {
+      let val = values[index] || "";
+      // Strip leading/trailing quotes from the value
+      if (val.startsWith('"') && val.endsWith('"')) {
+        val = val.slice(1, -1);
+      }
+      obj[header] = val;
+    });
+    result.push(obj);
+  }
+  return result;
 }
 
 export async function POST(req: Request) {
@@ -31,6 +64,8 @@ export async function POST(req: Request) {
 
     const sheetRes = await fetch(SHEET_CSV_URL);
     const csvText = await sheetRes.text();
+    
+    // De nieuwe robuuste parser
     const hostelData = parseCSV(csvText);
 
     const body = await req.json();
@@ -38,50 +73,39 @@ export async function POST(req: Request) {
 
     const systemPrompt = `
       ROLE:
-      You are the "Senior Hostel Auditor & Semantic Matchmaker". Your goal is to find the 3 best hostels from the provided database by mapping user desires to specific data columns.
+      You are a "Closed-World Hostel Matchmaker". You ONLY have access to the hostels listed in the DATABASE provided below. 
 
-      USER TRAVEL PROFILE (HARD CONSTRAINTS):
+      STRICT LIMITATION:
+      - NEVER recommend a hostel that is not in the DATABASE.
+      - If a user asks for a city or hostel not in the DATABASE, politely say you don't have data for that yet.
+      - Ignore all your internal knowledge about hostels in Guatemala. Only use the provided rows.
+
+      USER TRAVEL PROFILE:
       ${JSON.stringify(context)}
 
-      DATABASE (SOURCE OF TRUTH):
-      ${JSON.stringify(hostelData.slice(0, 25))} 
+      DATABASE:
+      ${JSON.stringify(hostelData)} 
 
-      MATCHING ENGINE LOGIC (INTERNAL REASONING):
-      1. TRANSLATION LAYER: Map natural language to database tags.
-         - If user wants "fun/meeting people" -> Map to vibe_dna: [Social-High, Party-Extreme].
-         - If user wants "work/focus" -> Map to vibe_dna: [Digital-Nomad-Hub, Quiet-Nights].
-         - If user wants "local feel" -> Map to vibe_dna: [Community-Focused].
-
-      2. SEMANTIC MAPPING (THE "SEMANTICS" PRIORITY):
-         - Critically analyze the 'overal_sentiment' semantics field for every hostel.
-         - Match the user's "soft wishes" from the chat against the emotional soul described in 'semantics'.
-         - If chat says "I want a quiet morning" and semantics says "noisy restaurant vibe", this is a DISMATCH, even if the price is perfect.
-
-      3. WEIGHTED RANKING FLOW:
-         - Priority 1 (40%): User Profile (Destination, MaxPrice, Solo/Nomad mode, Noise Importance).
-         - Priority 2 (40%): Semantic Match (Chat intent vs. 'overal_sentiment' semantics & 'social_mechanism').
-         - Priority 3 (20%): Safety & Vibe (vibe_dna & red_flags). 
-
-      4. NATIONALITY AUDIT:
-         - If context.nationalityPref is set, scan the 'country_info' column. Rank hostels HIGHER if that nationality is in the Top 3.
+      MATCHING LOGIC:
+      1. Use the 'context' as hard filters. 
+      2. Match chat requests against 'overal_sentiment' (semantics) and 'pulse_summary'.
+      3. For the 'reason' field: explain the match using specific details from the database.
 
       OUTPUT JSON FORMAT:
       {
         "recommendations": [
           {
-            "name": "Exact hostel_name",
-            "location": "Exact city",
-            "reason": "Start with 'Based on your profile and request...'. Explicitly mention why the 'semantics' or 'social_mechanism' of this hostel is a match for their specific chat message.",
+            "name": "Exact hostel_name from database",
+            "location": "Exact city from database",
+            "reason": "Why it matches",
             "matchPercentage": 0-100,
-            "price": "Exact pricing",
-            "vibe": "Exact vibe_dna",
-            "alert": "If red_flags is not 'None', summarize the warning here. Otherwise 'None'."
+            "price": "pricing field",
+            "vibe": "vibe_dna field",
+            "alert": "red_flags field (summarized or 'None')"
           }
         ],
-        "message": "A professional response in English explaining your top pick and asking if they want to know more."
+        "message": "Your conversational response in English."
       }
-
-      STRICT RULE: Only recommend hostels from the DATABASE. If 'red_flags' mention theft or bedbugs, mention this as an 'alert' in the JSON.
     `;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
