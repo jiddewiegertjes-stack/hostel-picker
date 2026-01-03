@@ -69,24 +69,24 @@ export async function POST(req: Request) {
                         2. Semantic & Social (25%): Compare chat intent to 'social_mechanism', 'pulse_summary', and 'overal_sentiment.semantics'.
                         3. Demographic Fit (20%): 
                            - Check 'country_info' for context.nationalityPref. 
-                           - Check 'gender' ratios to match user comfort (e.g. higher female ratio for solo female travelers).
+                           - Check 'gender' ratios and match 'overal_age' to the user's age (${context.age}).
                         4. Size & Noise (15%): Match context.size to 'rooms_info' and context.noiseLevel to 'noise_level'.
                         5. Logic Constraints (15%): Budget and Mode (Nomad/Solo) match.
 
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
-                        - GENDER RATIO: Use the 'gender' object to refine the match if the chat implies safety or social preferences.
-                        - ROOMS INFO: Use this to confirm the physical scale of the hostel matches user preference.
+                        - NOMAD/SOLO DATA: If nomadMode or soloMode is active, you MUST extract and show the RAW 'reasoning' or 'explanation' from the 'digital_nomad_score' or 'solo_verdict' JSON columns in the nomad_solo_audit field.
+                        - FACILITIES: Scan the 'facilities' column for specific user requests like 'breakfast'. If 'Free Breakfast' is found, confirm it; if 'Breakfast Not Included' is found, state it.
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
 
-AUDIT REQUIREMENTS:
+                        AUDIT REQUIREMENTS:
                         For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
                         - Price: user.maxPrice vs csv.pricing
                         - Vibe: user.vibe vs csv.vibe_dna
-                        - Social: chat request vs csv.social_mechanism & pulse_summary
-                        - Demographics: user.nationalityPref vs csv.country_info
+                        - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
+                        - Demographics: user.nationalityPref vs csv.country_info AND user.age vs csv.overal_age
 
                         OUTPUT JSON STRUCTURE:
                         {
@@ -101,9 +101,11 @@ AUDIT REQUIREMENTS:
                               "audit_log": {
                                 "price_logic": "User wants €X, hostel is €Y. [Match status]",
                                 "vibe_logic": "User wants vibe A, CSV vibe_dna contains B. [Match status]",
-                                "social_logic": "Matching chat request '...' to csv.social_mechanism '...'",
-                                "demographic_logic": "Checking nationalityPref vs country_info list"
+                                "social_logic": "Exact match check of chat/facility requests (e.g. breakfast) against csv.facilities and social_mechanism.",
+                                "demographic_logic": "Checking nationalityPref vs country_info AND matching user age (${context.age}) to csv.overal_age.",
+                                "nomad_solo_audit": "DIRECT DATA: Show the raw reasoning/explanation from digital_nomad_score or solo_verdict."
                               }
+                            }
                           ],
                           "message": "Strategic advice based on the profile."
                         }`
