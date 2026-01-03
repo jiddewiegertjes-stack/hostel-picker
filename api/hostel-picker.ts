@@ -24,7 +24,6 @@ function parseCSV(csvText: string) {
     let currRow: string[] = [];
     let inQuotes = false;
 
-    // Normalize text
     const text = csvText.trim();
 
     for (let i = 0; i < text.length; i++) {
@@ -61,7 +60,6 @@ function parseCSV(csvText: string) {
             let val = row[i] || "";
             if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
             
-            // Probeer JSON velden (overal_sentiment, etc) te cleansen
             if (val.includes('{') && val.includes('}')) {
                 try {
                     const sanitized = val.replace(/""/g, '"');
@@ -80,29 +78,29 @@ function parseCSV(csvText: string) {
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) throw new Error("API Key (OPENAI_API_KEY) missing in Vercel Environment Variables");
-        if (!SHEET_CSV_URL) throw new Error("Spreadsheet URL (SHEET_CSV_URL) missing in Vercel Environment Variables");
+        if (!apiKey) throw new Error("API Key (OPENAI_API_KEY) missing");
+        if (!SHEET_CSV_URL) throw new Error("Spreadsheet URL (SHEET_CSV_URL) missing");
 
         // 1. Fetch CSV
         const sheetRes = await fetch(SHEET_CSV_URL);
-        if (!sheetRes.ok) throw new Error(`Google Sheets fetch failed with status: ${sheetRes.status}`);
+        if (!sheetRes.ok) throw new Error(`Google Sheets fetch failed: ${sheetRes.status}`);
         
         const csvRaw = await sheetRes.text();
         const hostelData = parseCSV(csvRaw);
 
-        if (hostelData.length === 0) throw new Error("Spreadsheet parsed but returned 0 hostels. Check your headers and data.");
+        if (hostelData.length === 0) throw new Error("No hostels found in database.");
 
         const body = await req.json();
         const { messages, context } = body;
 
-        // 2. Filter data for the specific city
+        // 2. Filter data (Pre-filter on city for token efficiency)
         const userCity = (context?.destination || "").toLowerCase().trim();
         const cityMatches = hostelData.filter(h => (h.city || "").toLowerCase().trim() === userCity);
         
-        // Gebruik matches, of de hele lijst als er geen match is
+        // Gebruik stad-matches, of top 15 als fallback
         const finalData = cityMatches.length > 0 ? cityMatches : hostelData.slice(0, 15);
 
-        // 3. OpenAI Call
+        // 3. OpenAI Call with Strict Output Rules
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -115,14 +113,30 @@ export async function POST(req: Request) {
                     { 
                         role: "system", 
                         content: `You are a Senior Hostel Matchmaker. 
-                        STRICT: Only use hostels from this list: ${JSON.stringify(finalData)}.
-                        If the user city "${context?.destination}" is not in the list, explain it in the 'message' field and offer alternatives.
-                        User Profile context: ${JSON.stringify(context)}.
+
+                        USER CONTEXT: ${JSON.stringify(context)}
+                        DATABASE: ${JSON.stringify(finalData)}
                         
-                        OUTPUT JSON:
+                        STRICT RULES:
+                        1. ALWAYS provide exactly 3 recommendations in the 'recommendations' array, even in the first message.
+                        2. If the user's max price (€${context?.maxPrice}) is too low, suggest the best affordable alternatives from the list anyway and explain why.
+                        3. Map user intent to the 'overal_sentiment.semantics' and 'vibe_dna' columns.
+                        4. If the city "${context?.destination}" is not in the database, suggest hostels from other nearby cities.
+
+                        OUTPUT JSON STRUCTURE:
                         {
-                          "recommendations": [{"name": "..", "location": "..", "reason": "..", "matchPercentage": 0-100, "price": "..", "vibe": "..", "alert": ".."}],
-                          "message": "Conversational response"
+                          "recommendations": [
+                            {
+                              "name": "Exact name from database",
+                              "location": "City",
+                              "reason": "Why this matches their profile/chat",
+                              "matchPercentage": 0-100,
+                              "price": "pricing field",
+                              "vibe": "vibe_dna field",
+                              "alert": "red_flags or 'None'"
+                            }
+                          ],
+                          "message": "Friendly conversational response in English"
                         }`
                     },
                     ...messages
@@ -140,13 +154,12 @@ export async function POST(req: Request) {
         });
 
     } catch (error: any) {
-        // ZET ERROR OM IN CHATBERICHT IPV 500 CRASH
         console.error("Backend Error:", error.message);
         return new Response(JSON.stringify({ 
-            message: `⚠️ Matchmaker Error: ${error.message}. Please check your Vercel settings and Spreadsheet link.`,
+            message: `⚠️ Matchmaker Error: ${error.message}`,
             recommendations: null 
         }), { 
-            status: 200, // We sturen 200 zodat de frontend niet crasht maar de tekst toont
+            status: 200,
             headers: corsHeaders 
         });
     }
