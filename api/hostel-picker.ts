@@ -69,14 +69,14 @@ export async function POST(req: Request) {
                         2. Semantic & Social (25%): Compare chat intent to 'social_mechanism', 'pulse_summary', and 'overal_sentiment.semantics'.
                         3. Demographic Fit (20%): 
                            - Check 'country_info' for context.nationalityPref. 
-                           - Check 'gender' ratios and match 'overal_age' to the user's age (${context.age}).
+                           - Check 'gender' ratios and match 'overal_age' to the user age (${context.age}).
                         4. Size & Noise (15%): Match context.size to 'rooms_info' and context.noiseLevel to 'noise_level'.
                         5. Logic Constraints (15%): Budget and Mode (Nomad/Solo) match.
 
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
-                        - NOMAD/SOLO DATA: If nomadMode or soloMode is active, you MUST extract and show the RAW 'reasoning' or 'explanation' from the 'digital_nomad_score' or 'solo_verdict' JSON columns in the nomad_solo_audit field.
-                        - FACILITIES: Scan the 'facilities' column for specific user requests like 'breakfast'. If 'Free Breakfast' is found, confirm it; if 'Breakfast Not Included' is found, state it.
+                        - GENDER RATIO: Use the 'gender' object to refine the match if the chat implies safety or social preferences.
+                        - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, and solo proofs.
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
@@ -86,7 +86,8 @@ export async function POST(req: Request) {
                         - Price: user.maxPrice vs csv.pricing
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
-                        - Demographics: user.nationalityPref vs csv.country_info AND user.age vs csv.overal_age
+                        - Demographics: user.nationalityPref vs csv.country_info AND age match via overal_age
+                        - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, and csv.solo_verdict.
 
                         OUTPUT JSON STRUCTURE:
                         {
@@ -99,11 +100,13 @@ export async function POST(req: Request) {
                               "vibe": "vibe_dna",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
-                                "price_logic": "User wants €X, hostel is €Y. [Match status]",
-                                "vibe_logic": "User wants vibe A, CSV vibe_dna contains B. [Match status]",
-                                "social_logic": "Exact match check of chat/facility requests (e.g. breakfast) against csv.facilities and social_mechanism.",
-                                "demographic_logic": "Checking nationalityPref vs country_info AND matching user age (${context.age}) to csv.overal_age.",
-                                "nomad_solo_audit": "DIRECT DATA: Show the raw reasoning/explanation from digital_nomad_score or solo_verdict."
+                                "price_logic": "User wants €${context.maxPrice}, hostel is €pricing. [Match status]",
+                                "vibe_logic": "User wants vibe ${context.vibe}, CSV vibe_dna contains vibe_dna. [Match status]",
+                                "social_logic": "Matching chat request to csv.social_mechanism and pulse_summary.",
+                                "demographic_logic": "Checking nationalityPref vs country_info AND user age ${context.age} vs csv.overal_age.",
+                                "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
+                                "nomad_proof": "RAW REASONING FROM csv.digital_nomad_score JSON",
+                                "solo_proof": "RAW EXPLANATION FROM csv.solo_verdict JSON"
                               }
                             }
                           ],
