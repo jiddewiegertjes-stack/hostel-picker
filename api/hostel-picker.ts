@@ -77,7 +77,7 @@ export async function POST(req: Request) {
 
                         SCORING INDICES (Weights):
                         Assign points using these specific multipliers:
-                        - Pricing: 1.0 (Critical)
+                        - Pricing: 1.0 (Target Proximity)
                         - Digital Nomad suitability: 0.9 (Very High)
                         - Vibe Tags: 0.8 (High)
                         - Solo Traveler suitability: 0.7 (High)
@@ -88,10 +88,13 @@ export async function POST(req: Request) {
 
                         Tone of voice: You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
 
-                        SPECIAL PRICING LOGIC:
-                        Do not use a binary 'match'. Use a proximity-based score:
-                        - Price <= context.maxPrice: High Score. The closer the price is to the context.maxPrice (from below), the higher the value-match points.
-                        - Price > context.maxPrice: Deduct points exponentially. A small overage is a minor penalty; a large overage reduces the pricing score to 0.
+                        SPECIAL PRICING LOGIC (Estimated Price):
+                        Treat context.maxPrice (€${context.maxPrice}) as an ESTIMATED IDEAL PRICE, not a hard maximum limit. 
+                        Do not filter hostels out for being over this price.
+                        - Pricing Score (Weight 1.0): Use bell-curve proximity logic. 
+                        - 100% Score: Actual price is within +/- 10% of €${context.maxPrice}.
+                        - Proximity: A hostel costing €42 is a BETTER match for a €40 estimate than a hostel costing €15 (potential quality mismatch) or €65 (too expensive).
+                        - Penalty: Deduct points gradually as the price moves further away (higher OR lower) from the estimate.
 
                         NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
                         1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user.
@@ -104,14 +107,14 @@ export async function POST(req: Request) {
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
                         - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
                         - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
-                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: (Pillar Score * Index) + ... = Total Match%.
+                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: (Proximity Price Score * 1.0) + (Nomad Score * 0.9) + ... = Total Match%.
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
 
                         AUDIT REQUIREMENTS:
                         For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
-                        - Price: user.maxPrice vs csv.pricing
+                        - Price: user.maxPrice vs csv.pricing (Proximity check)
                         - Noise: user.noiseLevel (1-100) vs csv.noise_level
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
@@ -128,8 +131,8 @@ export async function POST(req: Request) {
                               "vibe": "vibe_dna",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
-                                "score_breakdown": "Mathematical proof: (Price Score * 1.0) + (Nomad Score * 0.9) + ... = Total %",
-                                "price_logic": "Proximity analysis: User wants €${context.maxPrice}, hostel is €pricing.",
+                                "score_breakdown": "Mathematical proof based on target €${context.maxPrice}: (Price Score * 1.0) + ... = Total %",
+                                "price_logic": "Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
                                 "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
                                 "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
                                 "trade_off_analysis": "Expert contrast: Nomad (0.9) vs Solo (0.7).",
