@@ -132,16 +132,16 @@ export async function POST(req: Request) {
                               "alert": "red_flags or 'None'",
                               "audit_log": {
                                 "score_breakdown": "MUST include all 7 categories with labels: Price: (X% * 1.0) + Nomad: (Y% * 0.9) + Vibe: (Z% * 0.8) + Solo: (A% * 0.7) + Noise: (B% * 0.3) + Rooms: (C% * 0.3) + Age: (D% * 0.2) = Total Match%",
-                                "price_logic": "Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
-                                "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
+                                "price_logic": "Weight 1.2 Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
+                                "noise_logic": "Weight 0.2: user ${context.noiseLevel} vs csv.noise_level.",
                                 "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
                                 "trade_off_analysis": "Expert contrast: Nomad (0.9) vs Solo (0.7).",
                                 "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
                                 "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
-                                "solo_proof": "Weight 0.7: data from csv.solo_verdict",
-                                "demographic_logic": "Weight 0.2: Age match (${context.age}) check."
+                                "solo_proof": "Weight 0.9: data from csv.solo_verdict",
+                               "demographic_logic": "Weight 0.2: Compare user age (${context.age}) with the hostel's typical age group from csv.overal_age. Explain why this is a good or bad fit."
                               }
                             }
                           ],
