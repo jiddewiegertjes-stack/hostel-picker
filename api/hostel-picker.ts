@@ -90,11 +90,12 @@ export async function POST(req: Request) {
                         4. Size & Noise (15%): Match context.size to 'rooms_info' and context.noiseLevel to 'noise_level'.
                         5. Logic Constraints (15%): Budget and Mode (Nomad/Solo) match.
 
-                        NEW PROTOCOL: INSUFFICIENT INPUT
-                        If the user's latest message is very brief, vague (e.g., "Hi", "help me", "show me a place"), or lacks enough detail to provide a high-quality audit despite the Profile data:
-                        1. Return an empty "recommendations" array: [].
-                        2. In the "message" field, ask 2 to 3 punchy, expert questions to uncover their specific needs (e.g., social style, work requirements, or specific amenities).
-                        3. Do NOT provide recommendations until you feel you can give a truly personalized audit.
+                        NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
+                        1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user via the UI. 
+                        2. DO NOT ASK for info already in USER CONTEXT. Never ask about budget, destination, age, vibe or noise levels if they are present in the context.
+                        3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting (e.g., "Hi", "Hello") or anything that is a vague statement, OR if there is a massive contradiction between the Profile and the Chat.
+                        4. SMART START: If the user says something like "show me the best spots" or "give me your picks", IMMEDIATELY perform the audit based on the Profile Data.
+                        5. QUESTIONS: If you must ask questions, focus on "The Soul of the Trip": specific social needs, work-privacy balance, or food/location preferences that aren't in the buttons.
 
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
