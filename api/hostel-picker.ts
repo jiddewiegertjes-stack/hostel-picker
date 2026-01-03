@@ -76,7 +76,8 @@ export async function POST(req: Request) {
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
                         - GENDER RATIO: Use the 'gender' object to refine the match if the chat implies safety or social preferences.
-                        - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, and solo proofs.
+                        - DATABASE PROOF: Provide RAW DATA from the spreadsheet for facilities, nomad, and solo proofs.
+                        - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
@@ -104,11 +105,11 @@ export async function POST(req: Request) {
                                 "price_logic": "User wants €${context.maxPrice}, hostel is €pricing. [Match status]",
                                 "noise_logic": "User wants noise level ${context.noiseLevel}, CSV noise_level is csv.noise_level. [Match status]",
                                 "vibe_logic": "User wants vibe ${context.vibe}, CSV vibe_dna contains vibe_dna. [Match status]",
-                                "social_logic": "Matching chat request to csv.social_mechanism and pulse_summary.",
-                                "demographic_logic": "Checking nationalityPref vs country_info AND user age ${context.age} vs csv.overal_age.",
+                                "trade_off_analysis": "Expert contrast: compare the work suitability vs social atmosphere based on CSV data.",
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "RAW REASONING FROM csv.digital_nomad_score JSON",
-                                "solo_proof": "RAW EXPLANATION FROM csv.solo_verdict JSON"
+                                "solo_proof": "RAW EXPLANATION FROM csv.solo_verdict JSON",
+                                "demographic_logic": "Checking nationalityPref vs country_info AND user age ${context.age} vs csv.overal_age."
                               }
                             }
                           ],
