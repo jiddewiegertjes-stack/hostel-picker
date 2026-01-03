@@ -1,157 +1,153 @@
 export const runtime = "edge";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
 };
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
 export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
 }
 
 /**
- * Robust CSV Parser: Handles quotes, commas, and malformed lines.
+ * Clean and Robust CSV to JSON Parser
  */
 function parseCSV(csvText: string) {
     const rows: string[][] = [];
-    let currCell = "";
-    let currRow: string[] = [];
+    let currentCell = "";
+    let currentRow: string[] = [];
     let inQuotes = false;
 
-    // Remove any trailing whitespace or newlines at the end of the file
-    const cleanText = csvText.trim();
+    // Normalize line endings
+    const text = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
-    for (let i = 0; i < cleanText.length; i++) {
-        const char = cleanText[i];
-        const nextChar = cleanText[i + 1];
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const nextChar = text[i + 1];
 
         if (char === '"' && inQuotes && nextChar === '"') {
-            currCell += '"';
+            currentCell += '"';
             i++;
         } else if (char === '"') {
             inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-            currRow.push(currCell.trim());
-            currCell = "";
-        } else if ((char === '\r' || char === '\n') && !inQuotes) {
-            if (currCell !== "" || currRow.length > 0) {
-                currRow.push(currCell.trim());
-                rows.push(currRow);
-                currRow = [];
-                currCell = "";
-            }
-            if (char === '\r' && nextChar === '\n') i++;
+        } else if (char === "," && !inQuotes) {
+            currentRow.push(currentCell.trim());
+            currentCell = "";
+        } else if (char === "\n" && !inQuotes) {
+            currentRow.push(currentCell.trim());
+            rows.push(currentRow);
+            currentRow = [];
+            currentCell = "";
         } else {
-            currCell += char;
+            currentCell += char;
         }
     }
-    if (currCell !== "" || currRow.length > 0) {
-        currRow.push(currCell.trim());
-        rows.push(currRow);
+    if (currentRow.length > 0 || currentCell) {
+        currentRow.push(currentCell.trim());
+        rows.push(currentRow);
     }
 
     if (rows.length < 2) return [];
 
-    const headers = rows[0].map(h => h.replace(":", "").trim().toLowerCase());
+    const headers = rows[0].map(h => h.replace(/[:"']/g, "").trim());
     
     return rows.slice(1).map(row => {
         const obj: any = {};
         headers.forEach((header, i) => {
             let val = row[i] || "";
-            // Remove surrounding quotes if present
+            // Clean up surrounding quotes
             if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
-            obj[header] = val;
+            
+            // Auto-parse JSON strings (vibe_dna, overal_sentiment etc)
+            if (val.includes("{") && val.includes("}")) {
+                try {
+                    // Replace double-double quotes which sometimes happen in CSV exports
+                    const sanitizedJson = val.replace(/""/g, '"');
+                    obj[header] = JSON.parse(sanitizedJson);
+                } catch (e) {
+                    obj[header] = val;
+                }
+            } else {
+                obj[header] = val;
+            }
         });
         return obj;
     });
 }
 
 export async function POST(req: Request) {
-  try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-    if (!SHEET_CSV_URL) throw new Error("Missing SHEET_CSV_URL environment variable");
+    try {
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) throw new Error("Missing OpenAI API Key");
 
-    // 1. Fetch CSV
-    const sheetRes = await fetch(SHEET_CSV_URL);
-    if (!sheetRes.ok) throw new Error("Failed to fetch spreadsheet. Is it public?");
-    
-    const csvRaw = await sheetRes.text();
-    const hostelData = parseCSV(csvRaw);
+        const sheetRes = await fetch(SHEET_CSV_URL);
+        if (!sheetRes.ok) throw new Error("Failed to fetch Google Sheet");
+        
+        const csvRaw = await sheetRes.text();
+        const hostelData = parseCSV(csvRaw);
 
-    if (hostelData.length === 0) {
-        throw new Error("No data found in spreadsheet or parsing failed.");
-    }
+        const body = await req.json();
+        const { messages, context } = body;
 
-    // 2. Parse User Input
-    const body = await req.json();
-    const { messages, context } = body;
-
-    // 3. Request OpenAI
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { 
-            role: "system", 
-            content: `You are a Senior Hostel Matchmaker for Guatemala.
-            
-            RULES:
-            1. ONLY recommend hostels from the provided DATABASE.
-            2. If no hostels match the destination, say: "I couldn't find any hostels in that specific location in my database yet."
-            3. Use 'overal_sentiment' semantics to match chat requests.
-            4. Respond in English.
-
-            USER PROFILE: ${JSON.stringify(context)}
-            DATABASE: ${JSON.stringify(hostelData.slice(0, 30))}
-
-            OUTPUT FORMAT:
-            {
-              "recommendations": [
-                {
-                  "name": "hostel_name",
-                  "location": "city",
-                  "reason": "Specific reason why it matches the user's chat message and profile",
-                  "matchPercentage": 0-100,
-                  "price": "pricing",
-                  "vibe": "vibe_dna",
-                  "alert": "red_flags or 'None'"
-                }
-              ],
-              "message": "Conversational message to user"
-            }`
-          },
-          ...messages
+        const systemPrompt = `
+      ROLE: Senior Hostel Matchmaker.
+      DATABASE (ONLY USE THIS): ${JSON.stringify(hostelData)}
+      
+      RULES:
+      1. ONLY recommend hostels from the database. 
+      2. If no match is found for a specific city, inform the user.
+      3. Use 'context' as primary filters: ${JSON.stringify(context)}.
+      4. Match chat requests to 'overal_sentiment.semantics'.
+      
+      OUTPUT FORMAT:
+      {
+        "recommendations": [
+          {
+            "name": "hostel_name",
+            "location": "city",
+            "reason": "Detailed match reason",
+            "matchPercentage": 0-100,
+            "price": "pricing",
+            "vibe": "vibe_dna",
+            "alert": "red_flags or 'None'"
+          }
         ],
-        response_format: { type: "json_object" }
-      }),
-    });
+        "message": "Direct response to user"
+      }
+    `;
 
-    const data = await response.json();
-    
-    if (data.error) throw new Error(data.error.message);
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model: "gpt-4o-mini",
+                messages: [{ role: "system", content: systemPrompt }, ...messages],
+                response_format: { type: "json_object" }
+            }),
+        });
 
-    return new Response(data.choices[0].message.content, {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+        const data = await response.json();
+        const content = data.choices[0].message.content;
 
-  } catch (error: any) {
-    console.error("Backend Error:", error.message);
-    return new Response(JSON.stringify({ 
-        message: "Matchmaker is having a siesta! Error: " + error.message,
-        recommendations: null 
-    }), { 
-      status: 200, // Status 200 so the frontend can display the error message nicely
-      headers: { ...corsHeaders, "Content-Type": "application/json" } 
-    });
-  }
+        return new Response(content, {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+
+    } catch (error: any) {
+        console.error("Backend Error:", error.message);
+        return new Response(JSON.stringify({ 
+            message: "System Error: " + error.message,
+            recommendations: null 
+        }), { 
+            status: 500, 
+            headers: corsHeaders 
+        });
+    }
 }
