@@ -106,8 +106,8 @@ export async function POST(req: Request) {
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
                         - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
                         - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
-                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation with CATEGORY LABELS.
-                        Format example: "Price: (95% * 1.0) + Vibe: (80% * 0.8) + Nomad: (70% * 0.9) + ..."
+                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
+                        Format example: "Price: (95% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
@@ -131,7 +131,7 @@ export async function POST(req: Request) {
                               "vibe": "vibe_dna",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
-                                "score_breakdown": "Price: (X% * 1.0) + Nomad: (Y% * 0.9) + Vibe: (Z% * 0.8) + ... = Total Match%",
+                                "score_breakdown": "MUST include all 7 categories with labels: Price: (X% * 1.0) + Nomad: (Y% * 0.9) + Vibe: (Z% * 0.8) + Solo: (A% * 0.7) + Noise: (B% * 0.3) + Rooms: (C% * 0.3) + Age: (D% * 0.2) = Total Match%",
                                 "price_logic": "Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
                                 "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
                                 "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
