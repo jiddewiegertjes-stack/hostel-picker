@@ -76,7 +76,7 @@ export async function POST(req: Request) {
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
                         - GENDER RATIO: Use the 'gender' object to refine the match if the chat implies safety or social preferences.
-                        - DATABASE PROOF: Provide RAW DATA from the spreadsheet for facilities, nomad, and solo proofs.
+                        - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
                         - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
 
                         DATABASE: ${JSON.stringify(pool)}
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
                         - Demographics: user.nationalityPref vs csv.country_info AND age match via overal_age
-                        - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, and csv.solo_verdict.
+                        - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
 
                         OUTPUT JSON STRUCTURE:
                         {
@@ -106,6 +106,8 @@ export async function POST(req: Request) {
                                 "noise_logic": "User wants noise level ${context.noiseLevel}, CSV noise_level is csv.noise_level. [Match status]",
                                 "vibe_logic": "User wants vibe ${context.vibe}, CSV vibe_dna contains vibe_dna. [Match status]",
                                 "trade_off_analysis": "Expert contrast: compare the work suitability vs social atmosphere based on CSV data.",
+                                "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
+                                "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "RAW REASONING FROM csv.digital_nomad_score JSON",
                                 "solo_proof": "RAW EXPLANATION FROM csv.solo_verdict JSON",
