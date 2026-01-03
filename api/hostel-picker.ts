@@ -84,6 +84,7 @@ export async function POST(req: Request) {
                         AUDIT REQUIREMENTS:
                         For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
                         - Price: user.maxPrice vs csv.pricing
+                        - Noise: user.noiseLevel (1-100) vs csv.noise_level
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
                         - Demographics: user.nationalityPref vs csv.country_info AND age match via overal_age
@@ -101,6 +102,7 @@ export async function POST(req: Request) {
                               "alert": "red_flags or 'None'",
                               "audit_log": {
                                 "price_logic": "User wants €${context.maxPrice}, hostel is €pricing. [Match status]",
+                                "noise_logic": "User wants noise level ${context.noiseLevel}, CSV noise_level is csv.noise_level. [Match status]",
                                 "vibe_logic": "User wants vibe ${context.vibe}, CSV vibe_dna contains vibe_dna. [Match status]",
                                 "social_logic": "Matching chat request to csv.social_mechanism and pulse_summary.",
                                 "demographic_logic": "Checking nationalityPref vs country_info AND user age ${context.age} vs csv.overal_age.",
