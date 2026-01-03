@@ -6,70 +6,36 @@ const corsHeaders = {
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
 };
 
-// URL uit Vercel Environment Variables
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
 export async function OPTIONS() {
     return new Response(null, { status: 204, headers: corsHeaders });
 }
 
-/**
- * Super Robust CSV Parser for Google Sheets
- */
 function parseCSV(csvText: string) {
     if (!csvText || csvText.length < 10) return [];
-    
     const rows: string[][] = [];
-    let currCell = "";
-    let currRow: string[] = [];
-    let inQuotes = false;
-
+    let currCell = ""; let currRow: string[] = []; let inQuotes = false;
     const text = csvText.trim();
-
     for (let i = 0; i < text.length; i++) {
-        const char = text[i];
-        const nextChar = text[i + 1];
-
-        if (char === '"' && inQuotes && nextChar === '"') {
-            currCell += '"'; i++;
-        } else if (char === '"') {
-            inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-            currRow.push(currCell.trim()); currCell = "";
-        } else if (char === '\n' && !inQuotes) {
-            currRow.push(currCell.trim());
-            rows.push(currRow);
-            currRow = []; currCell = "";
-        } else {
-            currCell += char;
-        }
+        const char = text[i]; const nextChar = text[i + 1];
+        if (char === '"' && inQuotes && nextChar === '"') { currCell += '"'; i++; }
+        else if (char === '"') { inQuotes = !inQuotes; }
+        else if (char === ',' && !inQuotes) { currRow.push(currCell.trim()); currCell = ""; }
+        else if (char === '\n' && !inQuotes) { currRow.push(currCell.trim()); rows.push(currRow); currRow = []; currCell = ""; }
+        else { currCell += char; }
     }
-    if (currRow.length > 0 || currCell) {
-        currRow.push(currCell.trim());
-        rows.push(currRow);
-    }
-
-    if (rows.length < 2) return [];
-
-    // Header cleaning: remove spaces, dots, colons and make lowercase
+    if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
     const headers = rows[0].map(h => h.toLowerCase().replace(/[^a-z0-h_]/g, "").trim());
-    
     return rows.slice(1).map(row => {
         const obj: any = {};
         headers.forEach((header, i) => {
             let val = row[i] || "";
             if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
-            
             if (val.includes('{') && val.includes('}')) {
-                try {
-                    const sanitized = val.replace(/""/g, '"');
-                    obj[header] = JSON.parse(sanitized);
-                } catch (e) {
-                    obj[header] = val; 
-                }
-            } else {
-                obj[header] = val;
-            }
+                try { const sanitized = val.replace(/""/g, '"'); obj[header] = JSON.parse(sanitized); }
+                catch (e) { obj[header] = val; }
+            } else { obj[header] = val; }
         });
         return obj;
     }).filter(h => h.hostel_name);
@@ -78,65 +44,57 @@ function parseCSV(csvText: string) {
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) throw new Error("API Key (OPENAI_API_KEY) missing");
-        if (!SHEET_CSV_URL) throw new Error("Spreadsheet URL (SHEET_CSV_URL) missing");
-
-        // 1. Fetch CSV
         const sheetRes = await fetch(SHEET_CSV_URL);
-        if (!sheetRes.ok) throw new Error(`Google Sheets fetch failed: ${sheetRes.status}`);
-        
         const csvRaw = await sheetRes.text();
         const hostelData = parseCSV(csvRaw);
-
-        if (hostelData.length === 0) throw new Error("No hostels found in database.");
-
         const body = await req.json();
         const { messages, context } = body;
 
-        // 2. Filter data (Pre-filter on city for token efficiency)
         const userCity = (context?.destination || "").toLowerCase().trim();
-        const cityMatches = hostelData.filter(h => (h.city || "").toLowerCase().trim() === userCity);
-        
-        // Gebruik stad-matches, of top 15 als fallback
-        const finalData = cityMatches.length > 0 ? cityMatches : hostelData.slice(0, 15);
+        const finalData = hostelData.filter(h => (h.city || "").toLowerCase().trim() === userCity);
+        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
 
-        // 3. OpenAI Call with Strict Output Rules
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-            },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({
                 model: "gpt-4o-mini",
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are a Senior Hostel Matchmaker. 
+                        content: `You are the Expert Hostel Matchmaker. Calculate match percentages based on strict pillars.
 
-                        USER CONTEXT: ${JSON.stringify(context)}
-                        DATABASE: ${JSON.stringify(finalData)}
-                        
+                        MATCHING PILLARS (100% Total Score):
+                        1. Overall Sentiment (25%): Direct use of 'overal_sentiment.score'. Higher score = higher weight.
+                        2. Semantic & Social (25%): Compare chat intent to 'social_mechanism', 'pulse_summary', and 'overal_sentiment.semantics'.
+                        3. Demographic Fit (20%): 
+                           - Check 'country_info' for context.nationalityPref. 
+                           - Check 'gender' ratios to match user comfort (e.g. higher female ratio for solo female travelers).
+                        4. Size & Noise (15%): Match context.size to 'rooms_info' and context.noiseLevel to 'noise_level'.
+                        5. Logic Constraints (15%): Budget and Mode (Nomad/Solo) match.
+
                         STRICT RULES:
-                        1. ALWAYS provide exactly 3 recommendations in the 'recommendations' array, even in the first message.
-                        2. If the user's max price (€${context?.maxPrice}) is too low, suggest the best affordable alternatives from the list anyway and explain why.
-                        3. Map user intent to the 'overal_sentiment.semantics' and 'vibe_dna' columns.
-                        4. If the city "${context?.destination}" is not in the database, suggest hostels from other nearby cities.
+                        - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
+                        - GENDER RATIO: Use the 'gender' object to refine the match if the chat implies safety or social preferences.
+                        - ROOMS INFO: Use this to confirm the physical scale of the hostel matches user preference.
 
-                        OUTPUT JSON STRUCTURE:
+                        DATABASE: ${JSON.stringify(pool)}
+                        USER CONTEXT: ${JSON.stringify(context)}
+
+                        OUTPUT JSON:
                         {
                           "recommendations": [
                             {
-                              "name": "Exact name from database",
-                              "location": "City",
-                              "reason": "Why this matches their profile/chat",
+                              "name": "hostel_name",
+                              "location": "city",
+                              "reason": "Explain match using social_mechanism, pulse_summary, and demographic info (nationality/gender).",
                               "matchPercentage": 0-100,
-                              "price": "pricing field",
-                              "vibe": "vibe_dna field",
-                              "alert": "red_flags or 'None'"
+                              "price": "pricing",
+                              "vibe": "vibe_dna",
+                              "alert": "Summary of 'red_flags' if they are not 'None', otherwise 'None'"
                             }
                           ],
-                          "message": "Friendly conversational response in English"
+                          "message": "Strategic advice based on the profile."
                         }`
                     },
                     ...messages
@@ -146,21 +104,11 @@ export async function POST(req: Request) {
         });
 
         const aiData = await response.json();
-        if (aiData.error) throw new Error(`OpenAI Error: ${aiData.error.message}`);
-
         return new Response(aiData.choices[0].message.content, {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200, headers: corsHeaders 
         });
 
     } catch (error: any) {
-        console.error("Backend Error:", error.message);
-        return new Response(JSON.stringify({ 
-            message: `⚠️ Matchmaker Error: ${error.message}`,
-            recommendations: null 
-        }), { 
-            status: 200,
-            headers: corsHeaders 
-        });
+        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
     }
 }
