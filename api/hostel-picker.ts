@@ -78,6 +78,7 @@ export async function POST(req: Request) {
                         SCORING INDICES (Weights):
                         Assign points using these specific multipliers:
                         - Pricing: 1.0 (Target Proximity)
+                        - Overall Sentiment: 1.0 (Critical - based on csv.overal_sentiment.score)
                         - Digital Nomad suitability: 0.9 (Very High)
                         - Vibe Tags: 0.8 (High)
                         - Solo Traveler suitability: 0.7 (High)
@@ -106,8 +107,8 @@ export async function POST(req: Request) {
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
                         - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
                         - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
-                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
-                        Format example: "Price: (95% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
+                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Sentiment, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
+                        Format example: "Price: (95% * 1.0) + Sentiment: (90% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
@@ -115,6 +116,7 @@ export async function POST(req: Request) {
                         AUDIT REQUIREMENTS:
                         For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
                         - Price: user.maxPrice vs csv.pricing (Proximity check)
+                        - Sentiment: analysis of csv.overal_sentiment.score (Weight 1.0)
                         - Noise: user.noiseLevel (1-100) vs csv.noise_level
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
@@ -131,17 +133,18 @@ export async function POST(req: Request) {
                               "vibe": "vibe_dna",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
-                                "score_breakdown": "MUST include all 7 categories with labels: Price: (X% * 1.0) + Nomad: (Y% * 0.9) + Vibe: (Z% * 0.8) + Solo: (A% * 0.7) + Noise: (B% * 0.3) + Rooms: (C% * 0.3) + Age: (D% * 0.2) = Total Match%",
-                                "price_logic": "Weight 1.2 Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
-                                "noise_logic": "Weight 0.2: user ${context.noiseLevel} vs csv.noise_level.",
+                                "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
+                                "price_logic": "Weight 1.0 Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
+                                "sentiment_logic": "Weight 1.0: Analysis of overall sentiment score from csv.overal_sentiment.",
+                                "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
                                 "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
                                 "trade_off_analysis": "Expert contrast: Nomad (0.9) vs Solo (0.7).",
                                 "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
                                 "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
-                                "solo_proof": "Weight 0.9: data from csv.solo_verdict",
-                               "demographic_logic": "Weight 0.2: Compare user age (${context.age}) with the hostel's typical age group from csv.overal_age. Explain why this is a good or bad fit."
+                                "solo_proof": "Weight 0.7: data from csv.solo_verdict",
+                                "demographic_logic": "Weight 0.2: Compare user age (${context.age}) with typical age group from csv.overal_age."
                               }
                             }
                           ],
