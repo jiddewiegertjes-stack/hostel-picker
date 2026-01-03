@@ -14,11 +14,14 @@ export async function OPTIONS() {
 
 function parseCSV(csvText: string) {
     if (!csvText || csvText.length < 10) return [];
+    
+    // Verwijder onzichtbare tekens (BOM) aan het begin van het bestand
+    const cleanText = csvText.trim().replace(/^\uFEFF/, "");
+    
     const rows: string[][] = [];
     let currCell = ""; let currRow: string[] = []; let inQuotes = false;
-    const text = csvText.trim();
-    for (let i = 0; i < text.length; i++) {
-        const char = text[i]; const nextChar = text[i + 1];
+    for (let i = 0; i < cleanText.length; i++) {
+        const char = cleanText[i]; const nextChar = cleanText[i + 1];
         if (char === '"' && inQuotes && nextChar === '"') { currCell += '"'; i++; }
         else if (char === '"') { inQuotes = !inQuotes; }
         else if (char === ',' && !inQuotes) { currRow.push(currCell.trim()); currCell = ""; }
@@ -26,7 +29,10 @@ function parseCSV(csvText: string) {
         else { currCell += char; }
     }
     if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
-    const headers = rows[0].map(h => h.toLowerCase().replace(/[^a-z0-h_]/g, "").trim());
+
+    // HEADERS FIX: Nu met 0-9 ondersteuning en robuustere opschoning
+    const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
+    
     return rows.slice(1).map(row => {
         const obj: any = {};
         headers.forEach((header, i) => {
@@ -38,20 +44,29 @@ function parseCSV(csvText: string) {
             } else { obj[header] = val; }
         });
         return obj;
-    }).filter(h => h.hostel_name);
+    }).filter(h => h.hostel_name && h.hostel_name.length > 1);
 }
 
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
-        const sheetRes = await fetch(SHEET_CSV_URL);
+
+        // CACHE BUSTER: Voegt een timestamp toe om verse data van Google te dwingen
+        const cacheBuster = SHEET_CSV_URL.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
+        const sheetRes = await fetch(SHEET_CSV_URL + cacheBuster);
+        
         const csvRaw = await sheetRes.text();
         const hostelData = parseCSV(csvRaw);
         const body = await req.json();
         const { messages, context } = body;
 
+        // FILTER FIX: Maakt stadsnaam vergelijking ongevoelig voor spaties en hoofdletters
         const userCity = (context?.destination || "").toLowerCase().trim();
-        const finalData = hostelData.filter(h => (h.city || "").toLowerCase().trim() === userCity);
+        const finalData = hostelData.filter(h => {
+            const cityInSheet = (h.city || "").toLowerCase().trim();
+            return cityInSheet === userCity;
+        });
+        
         const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -65,14 +80,14 @@ export async function POST(req: Request) {
                         content: `You are the Expert Hostel Matchmaker. Calculate match percentages based on strict pillars.
 
                         
-                        Tone of voice: `You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
+                        Tone of voice: You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
 
                         MATCHING PILLARS (100% Total Score):
                         1. Overall Sentiment (25%): Direct use of 'overal_sentiment.score'. Higher score = higher weight.
                         2. Semantic & Social (25%): Compare chat intent to 'social_mechanism', 'pulse_summary', and 'overal_sentiment.semantics'.
                         3. Demographic Fit (20%): 
-                           - Check 'country_info' for context.nationalityPref. 
-                           - Check 'gender' ratios and match 'overal_age' to the user age (${context.age}).
+                            - Check 'country_info' for context.nationalityPref. 
+                            - Check 'gender' ratios and match 'overal_age' to the user age (${context.age}).
                         4. Size & Noise (15%): Match context.size to 'rooms_info' and context.noiseLevel to 'noise_level'.
                         5. Logic Constraints (15%): Budget and Mode (Nomad/Solo) match.
 
