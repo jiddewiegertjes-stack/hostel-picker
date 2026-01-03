@@ -13,56 +13,48 @@ export async function OPTIONS() {
 }
 
 /**
- * Advanced CSV Parser: Handles quotes, newlines within cells, and nested commas.
+ * Robust CSV Parser that handles quotes and commas inside fields
  */
 function parseCSV(csvText: string) {
-    const rows = [];
-    let currCell = "";
-    let currRow = [];
+  const lines = csvText.split(/\r?\n/);
+  if (lines.length === 0) return [];
+  
+  // Clean headers (remove colons and trim)
+  const headers = lines[0].split(",").map(h => h.trim().replace(":", ""));
+  const result = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
+    const values = [];
+    let current = "";
     let inQuotes = false;
 
-    for (let i = 0; i < csvText.length; i++) {
-        const char = csvText[i];
-        const nextChar = csvText[i + 1];
-
-        if (char === '"' && inQuotes && nextChar === '"') {
-            currCell += '"';
-            i++;
-        } else if (char === '"') {
-            inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-            currRow.push(currCell.trim());
-            currCell = "";
-        } else if ((char === '\r' || char === '\n') && !inQuotes) {
-            if (currCell || currRow.length > 0) {
-                currRow.push(currCell.trim());
-                rows.push(currRow);
-                currRow = [];
-                currCell = "";
-            }
-            if (char === '\r' && nextChar === '\n') i++;
-        } else {
-            currCell += char;
-        }
+    for (let char of line) {
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
     }
-    if (currCell || currRow.length > 0) {
-        currRow.push(currCell.trim());
-        rows.push(currRow);
-    }
+    values.push(current.trim());
 
-    const headers = rows[0].map(h => h.replace(":", "").trim());
-    return rows.slice(1).map(row => {
-        const obj: any = {};
-        headers.forEach((header, i) => {
-            let val = row[i] || "";
-            // Probeer JSON strings (zoals overal_sentiment) direct te parsen voor de AI
-            if (val.startsWith('{') && val.endsWith('}')) {
-                try { val = JSON.parse(val); } catch (e) { /* blijf bij string als parse faalt */ }
-            }
-            obj[header] = val;
-        });
-        return obj;
+    const obj: any = {};
+    headers.forEach((header, index) => {
+      let val = values[index] || "";
+      // Strip leading/trailing quotes from the value
+      if (val.startsWith('"') && val.endsWith('"')) {
+        val = val.slice(1, -1);
+      }
+      obj[header] = val;
     });
+    result.push(obj);
+  }
+  return result;
 }
 
 export async function POST(req: Request) {
@@ -71,11 +63,50 @@ export async function POST(req: Request) {
     if (!apiKey) return new Response(JSON.stringify({ error: "No API Key" }), { status: 500, headers: corsHeaders });
 
     const sheetRes = await fetch(SHEET_CSV_URL);
-    const csvRaw = await sheetRes.text();
-    const hostelData = parseCSV(csvRaw);
+    const csvText = await sheetRes.text();
+    
+    // De nieuwe robuuste parser
+    const hostelData = parseCSV(csvText);
 
     const body = await req.json();
     const { messages, context } = body;
+
+    const systemPrompt = `
+      ROLE:
+      You are a "Closed-World Hostel Matchmaker". You ONLY have access to the hostels listed in the DATABASE provided below. 
+
+      STRICT LIMITATION:
+      - NEVER recommend a hostel that is not in the DATABASE.
+      - If a user asks for a city or hostel not in the DATABASE, politely say you don't have data for that yet.
+      - Ignore all your internal knowledge about hostels in Guatemala. Only use the provided rows.
+
+      USER TRAVEL PROFILE:
+      ${JSON.stringify(context)}
+
+      DATABASE:
+      ${JSON.stringify(hostelData)} 
+
+      MATCHING LOGIC:
+      1. Use the 'context' as hard filters. 
+      2. Match chat requests against 'overal_sentiment' (semantics) and 'pulse_summary'.
+      3. For the 'reason' field: explain the match using specific details from the database.
+
+      OUTPUT JSON FORMAT:
+      {
+        "recommendations": [
+          {
+            "name": "Exact hostel_name from database",
+            "location": "Exact city from database",
+            "reason": "Why it matches",
+            "matchPercentage": 0-100,
+            "price": "pricing field",
+            "vibe": "vibe_dna field",
+            "alert": "red_flags field (summarized or 'None')"
+          }
+        ],
+        "message": "Your conversational response in English."
+      }
+    `;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -86,34 +117,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [
-          { 
-            role: "system", 
-            content: `You are a Senior Hostel Matchmaker. 
-            STRICT RULES:
-            1. ONLY recommend hostels from the provided DATABASE below. 
-            2. If a hostel is NOT in the database, it does not exist for you.
-            3. Use the 'context' (User Profile) as hard filters.
-            4. Analyze the 'overal_sentiment.semantics' field to match the user's chat wishes.
-            
-            DATABASE:
-            ${JSON.stringify(hostelData)}
-
-            OUTPUT JSON:
-            {
-              "recommendations": [
-                {
-                  "name": "Exact hostel_name",
-                  "location": "Exact city",
-                  "reason": "Explain match using semantics/pulse_summary",
-                  "matchPercentage": 0-100,
-                  "price": "pricing",
-                  "vibe": "vibe_dna",
-                  "alert": "red_flags or 'None'"
-                }
-              ],
-              "message": "Friendly response in English"
-            }`
-          },
+          { role: "system", content: systemPrompt },
           ...messages
         ],
         response_format: { type: "json_object" }
