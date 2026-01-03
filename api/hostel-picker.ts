@@ -81,18 +81,29 @@ export async function POST(req: Request) {
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
 
-                        OUTPUT JSON:
+AUDIT REQUIREMENTS:
+                        For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
+                        - Price: user.maxPrice vs csv.pricing
+                        - Vibe: user.vibe vs csv.vibe_dna
+                        - Social: chat request vs csv.social_mechanism & pulse_summary
+                        - Demographics: user.nationalityPref vs csv.country_info
+
+                        OUTPUT JSON STRUCTURE:
                         {
                           "recommendations": [
                             {
                               "name": "hostel_name",
                               "location": "city",
-                              "reason": "Explain match using social_mechanism, pulse_summary, and demographic info (nationality/gender).",
                               "matchPercentage": 0-100,
                               "price": "pricing",
                               "vibe": "vibe_dna",
-                              "alert": "Summary of 'red_flags' if they are not 'None', otherwise 'None'"
-                            }
+                              "alert": "red_flags or 'None'",
+                              "audit_log": {
+                                "price_logic": "User wants €X, hostel is €Y. [Match status]",
+                                "vibe_logic": "User wants vibe A, CSV vibe_dna contains B. [Match status]",
+                                "social_logic": "Matching chat request '...' to csv.social_mechanism '...'",
+                                "demographic_logic": "Checking nationalityPref vs country_info list"
+                              }
                           ],
                           "message": "Strategic advice based on the profile."
                         }`
