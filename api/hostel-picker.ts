@@ -31,7 +31,7 @@ function parseCSV(csvText: string) {
     if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
 
     // HEADERS FIX: Nu met 0-9 ondersteuning en robuustere opschoning
-    const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
+    const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-h_]/g, "").trim());
     
     return rows.slice(1).map(row => {
         const obj: any = {};
@@ -77,25 +77,32 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are the Expert Hostel Matchmaker. Calculate match percentages based on strict pillars.
+                        content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
+
+                        SCORING INDICES (Weights):
+                        Assign points using these specific multipliers:
+                        - Pricing: 1.0 (Critical)
+                        - Digital Nomad suitability: 0.9 (Very High)
+                        - Vibe Tags: 0.8 (High)
+                        - Solo Traveler suitability: 0.7 (High)
+                        - Noise Level: 0.3 (Low)
+                        - Rooms Info (Size/Type): 0.3 (Low)
+                        - Gender Ratio/Fit: 0.2 (Very Low)
+                        - Overall Age Match: 0.2 (Very Low)
 
                         Tone of voice: You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
 
-                        MATCHING PILLARS (100% Total Score):
-                        1. Overall Sentiment (25%): Direct use of 'overal_sentiment.score'. Higher score = higher weight.
-                        2. Semantic & Social (25%): Compare chat intent to 'social_mechanism', 'pulse_summary', and 'overal_sentiment.semantics'.
-                        3. Demographic Fit (20%): 
-                            - Check 'country_info' for context.nationalityPref. 
-                            - Check 'gender' ratios and match 'overal_age' to the user age (${context.age}).
-                        4. Size & Noise (15%): Match context.size to 'rooms_info' and context.noiseLevel to 'noise_level'.
-                        5. Logic Constraints (15%): Budget and Mode (Nomad/Solo) match.
+                        SPECIAL PRICING LOGIC:
+                        Do not use a binary 'match'. Use a proximity-based score:
+                        - Price <= context.maxPrice: High Score. The closer the price is to the context.maxPrice (from below), the higher the value-match points.
+                        - Price > context.maxPrice: Deduct points exponentially. A small overage is a minor penalty; a large overage reduces the pricing score to 0.
 
                         NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
-                        1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user via the UI. 
-                        2. DO NOT ASK for info already in USER CONTEXT. Never ask about budget, destination, age, vibe or noise levels if they are present in the context.
-                        3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting (e.g., "Hi", "Hello") or anything that is a vague statement, OR if there is a massive contradiction between the Profile and the Chat.
-                        4. SMART START: If the user says something like "show me the best spots" or "give me your picks", IMMEDIATELY perform the audit based on the Profile Data.
-                        5. QUESTIONS: If you must ask questions, focus on "The Soul of the Trip": specific social needs, work-privacy balance, or food/location preferences that aren't in the buttons.
+                        1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user.
+                        2. DO NOT ASK for info already in USER CONTEXT.
+                        3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting or vague statement.
+                        4. SMART START: If the user says "show me the best spots" or similar, IMMEDIATELY perform the audit based on Profile Data.
+                        5. QUESTIONS: Focus only on "The Soul of the Trip" (specific social needs or work setup) not found in buttons.
 
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
@@ -104,14 +111,6 @@ export async function POST(req: Request) {
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
-
-                        AUDIT REQUIREMENTS:
-                        For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
-                        - Price: user.maxPrice vs csv.pricing
-                        - Noise: user.noiseLevel (1-100) vs csv.noise_level
-                        - Vibe: user.vibe vs csv.vibe_dna
-                        - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
-                        - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
 
                         OUTPUT JSON STRUCTURE:
                         {
@@ -124,16 +123,16 @@ export async function POST(req: Request) {
                               "vibe": "vibe_dna",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
-                                "price_logic": "User wants €${context.maxPrice}, hostel is €pricing. [Match status]",
-                                "noise_logic": "User wants noise level ${context.noiseLevel}, CSV noise_level is csv.noise_level. [Match status]",
-                                "vibe_logic": "User wants vibe ${context.vibe}, CSV vibe_dna contains vibe_dna. [Match status]",
-                                "trade_off_analysis": "Expert contrast: compare the work suitability vs social atmosphere based on CSV data.",
+                                "price_logic": "Proximity analysis: User wants €${context.maxPrice}, hostel is €pricing.",
+                                "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
+                                "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
+                                "trade_off_analysis": "Expert contrast: Nomad (0.9) vs Solo (0.7).",
                                 "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
                                 "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
-                                "nomad_proof": "RAW REASONING FROM csv.digital_nomad_score JSON",
-                                "solo_proof": "RAW EXPLANATION FROM csv.solo_verdict JSON",
-                                "demographic_logic": "Checking nationalityPref vs country_info AND user age ${context.age} vs csv.overal_age."
+                                "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
+                                "solo_proof": "Weight 0.7: data from csv.solo_verdict",
+                                "demographic_logic": "Weight 0.2: Age match (${context.age}) and Gender mix."
                               }
                             }
                           ],
