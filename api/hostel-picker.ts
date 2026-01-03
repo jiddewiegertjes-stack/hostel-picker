@@ -108,6 +108,7 @@ export async function POST(req: Request) {
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
                         - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
                         - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
+                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: (Pillar Score * Index) + ... = Total Match%.
 
                         DATABASE: ${JSON.stringify(pool)}
                         USER CONTEXT: ${JSON.stringify(context)}
@@ -123,6 +124,7 @@ export async function POST(req: Request) {
                               "vibe": "vibe_dna",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
+                                "score_breakdown": "Mathematical proof: (Price Score * 1.0) + (Nomad Score * 0.9) + ... = Total %",
                                 "price_logic": "Proximity analysis: User wants €${context.maxPrice}, hostel is €pricing.",
                                 "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
                                 "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
