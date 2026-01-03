@@ -83,7 +83,6 @@ export async function POST(req: Request) {
                         - Solo Traveler suitability: 0.7 (High)
                         - Noise Level: 0.3 (Low)
                         - Rooms Info (Size/Type): 0.3 (Low)
-                        - Gender Ratio/Fit: 0.2 (Very Low)
                         - Overall Age Match: 0.2 (Very Low)
 
                         Tone of voice: You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
@@ -141,7 +140,7 @@ export async function POST(req: Request) {
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
                                 "solo_proof": "Weight 0.7: data from csv.solo_verdict",
-                                "demographic_logic": "Weight 0.2: Age match (${context.age}) and Gender mix."
+                                "demographic_logic": "Weight 0.2: Age match (${context.age}) check."
                               }
                             }
                           ],
