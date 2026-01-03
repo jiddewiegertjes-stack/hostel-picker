@@ -18,76 +18,74 @@ function parseCSV(csvText: string) {
     let currRow: string[] = [];
     let inQuotes = false;
 
-    // Normalize and iterate
-    const text = csvText.trim();
-    for (let i = 0; i < text.length; i++) {
-        const char = text[i];
-        const nextChar = text[i + 1];
-
+    for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
         if (char === '"' && inQuotes && nextChar === '"') {
-            currCell += '"';
-            i++;
+            currCell += '"'; i++;
         } else if (char === '"') {
             inQuotes = !inQuotes;
         } else if (char === ',' && !inQuotes) {
-            currRow.push(currCell.trim());
-            currCell = "";
+            currRow.push(currCell.trim()); currCell = "";
         } else if (char === '\n' && !inQuotes) {
-            currRow.push(currCell.trim());
-            rows.push(currRow);
-            currRow = [];
-            currCell = "";
+            currRow.push(currCell.trim()); rows.push(currRow);
+            currRow = []; currCell = "";
         } else {
             currCell += char;
         }
     }
     if (currRow.length > 0 || currCell) {
-        currRow.push(currCell.trim());
-        rows.push(currRow);
+        currRow.push(currCell.trim()); rows.push(currRow);
     }
-
-    if (rows.length === 0) return [];
     
-    // Header cleaning (e.g. 'pulse_summary:' -> 'pulse_summary')
-    const headers = rows[0].map(h => h.replace(/[:"']/g, "").trim());
-
+    if (rows.length < 2) return [];
+    
+    // Header cleaning
+    const headers = rows[0].map(h => h.toLowerCase().replace(/[:"']/g, "").trim());
+    
     return rows.slice(1).map(row => {
         const obj: any = {};
         headers.forEach((header, i) => {
             let val = row[i] || "";
-            // Remove wrapping quotes
             if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
             
-            // Clean up double-double quotes in potential JSON strings
+            // Specifieke fix voor de JSON kolommen in jouw sheet
             if (val.includes('{') && val.includes('}')) {
                 try {
+                    // Google Sheets export fix: vervang "" door "
                     const sanitized = val.replace(/""/g, '"');
                     obj[header] = JSON.parse(sanitized);
-                } catch (e) {
-                    obj[header] = val;
+                } catch (e) { 
+                    obj[header] = val; // Fallback naar string als JSON echt stuk is
                 }
             } else {
                 obj[header] = val;
             }
         });
         return obj;
-    });
+    }).filter(item => item.hostel_name); // Alleen rijen met een naam doorlaten
 }
 
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) throw new Error("API Key missing");
+        if (!apiKey) throw new Error("API_KEY_MISSING");
 
         const sheetRes = await fetch(SHEET_CSV_URL);
-        if (!sheetRes.ok) throw new Error("Could not fetch CSV data");
-        const csvRaw = await sheetRes.text();
+        if (!sheetRes.ok) throw new Error("SHEET_FETCH_FAILED");
         
+        const csvRaw = await sheetRes.text();
         const hostelData = parseCSV(csvRaw);
-        if (hostelData.length === 0) throw new Error("Database is empty or failed to parse");
 
         const body = await req.json();
         const { messages, context } = body;
+
+        // Filter op stad (Antigua, Flores etc)
+        const userCity = (context.destination || "").toLowerCase().trim();
+        const matches = hostelData.filter(h => (h.city || "").toLowerCase().trim() === userCity);
+
+        // Geef de AI de matches, of de hele lijst als er geen directe stads-match is
+        const finalPool = matches.length > 0 ? matches : hostelData.slice(0, 15);
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -101,27 +99,14 @@ export async function POST(req: Request) {
                     { 
                         role: "system", 
                         content: `You are a Senior Hostel Matchmaker. 
-                        STRICT RULES:
-                        1. ONLY recommend hostels from the provided DATABASE.
-                        2. Database content: ${JSON.stringify(hostelData)}
-                        3. Use user profile context: ${JSON.stringify(context)}.
-                        4. Focus on 'overal_sentiment.semantics' and 'vibe_dna'.
                         
-                        OUTPUT FORMAT:
-                        {
-                          "recommendations": [
-                            {
-                              "name": "hostel_name",
-                              "location": "city",
-                              "reason": "Detailed reasoning based on spreadsheet data",
-                              "matchPercentage": 0-100,
-                              "price": "pricing",
-                              "vibe": "vibe_dna",
-                              "alert": "red_flags or 'None'"
-                            }
-                          ],
-                          "message": "Direct response to user"
-                        }`
+                        DATABASE: ${JSON.stringify(finalPool)}
+                        
+                        MATCHING RULES:
+                        1. Recommend exactly 3 hostels in JSON format.
+                        2. If the user city "${context.destination}" has no matches, explain this and suggest alternatives from the database.
+                        3. Use the 'overal_sentiment.semantics' and 'vibe_dna' to justify the match.
+                        4. Keep results strictly from the provided DATABASE.`
                     },
                     ...messages
                 ],
@@ -136,9 +121,10 @@ export async function POST(req: Request) {
         });
 
     } catch (error: any) {
-        return new Response(JSON.stringify({ message: "Error: " + error.message }), { 
-            status: 500, 
-            headers: corsHeaders 
-        });
+        console.error("DEBUG:", error.message);
+        return new Response(JSON.stringify({ 
+            message: "Assistant: I encountered an error reading the database. Please try again.",
+            recommendations: [] 
+        }), { status: 200, headers: corsHeaders });
     }
 }
