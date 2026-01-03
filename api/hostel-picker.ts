@@ -13,101 +13,84 @@ export async function OPTIONS() {
 }
 
 /**
- * Robust CSV Parser that handles quotes and commas inside fields
+ * Robust CSV Parser: Handles quotes, commas, and malformed lines.
  */
 function parseCSV(csvText: string) {
-  const lines = csvText.split(/\r?\n/);
-  if (lines.length === 0) return [];
-  
-  // Clean headers (remove colons and trim)
-  const headers = lines[0].split(",").map(h => h.trim().replace(":", ""));
-  const result = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-
-    const values = [];
-    let current = "";
+    const rows: string[][] = [];
+    let currCell = "";
+    let currRow: string[] = [];
     let inQuotes = false;
 
-    for (let char of line) {
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        values.push(current.trim());
-        current = "";
-      } else {
-        current += char;
-      }
-    }
-    values.push(current.trim());
+    // Remove any trailing whitespace or newlines at the end of the file
+    const cleanText = csvText.trim();
 
-    const obj: any = {};
-    headers.forEach((header, index) => {
-      let val = values[index] || "";
-      // Strip leading/trailing quotes from the value
-      if (val.startsWith('"') && val.endsWith('"')) {
-        val = val.slice(1, -1);
-      }
-      obj[header] = val;
+    for (let i = 0; i < cleanText.length; i++) {
+        const char = cleanText[i];
+        const nextChar = cleanText[i + 1];
+
+        if (char === '"' && inQuotes && nextChar === '"') {
+            currCell += '"';
+            i++;
+        } else if (char === '"') {
+            inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+            currRow.push(currCell.trim());
+            currCell = "";
+        } else if ((char === '\r' || char === '\n') && !inQuotes) {
+            if (currCell !== "" || currRow.length > 0) {
+                currRow.push(currCell.trim());
+                rows.push(currRow);
+                currRow = [];
+                currCell = "";
+            }
+            if (char === '\r' && nextChar === '\n') i++;
+        } else {
+            currCell += char;
+        }
+    }
+    if (currCell !== "" || currRow.length > 0) {
+        currRow.push(currCell.trim());
+        rows.push(currRow);
+    }
+
+    if (rows.length < 2) return [];
+
+    const headers = rows[0].map(h => h.replace(":", "").trim().toLowerCase());
+    
+    return rows.slice(1).map(row => {
+        const obj: any = {};
+        headers.forEach((header, i) => {
+            let val = row[i] || "";
+            // Remove surrounding quotes if present
+            if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+            obj[header] = val;
+        });
+        return obj;
     });
-    result.push(obj);
-  }
-  return result;
 }
 
 export async function POST(req: Request) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return new Response(JSON.stringify({ error: "No API Key" }), { status: 500, headers: corsHeaders });
+    if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+    if (!SHEET_CSV_URL) throw new Error("Missing SHEET_CSV_URL environment variable");
 
+    // 1. Fetch CSV
     const sheetRes = await fetch(SHEET_CSV_URL);
-    const csvText = await sheetRes.text();
+    if (!sheetRes.ok) throw new Error("Failed to fetch spreadsheet. Is it public?");
     
-    // De nieuwe robuuste parser
-    const hostelData = parseCSV(csvText);
+    const csvRaw = await sheetRes.text();
+    const hostelData = parseCSV(csvRaw);
 
+    if (hostelData.length === 0) {
+        throw new Error("No data found in spreadsheet or parsing failed.");
+    }
+
+    // 2. Parse User Input
     const body = await req.json();
     const { messages, context } = body;
 
-    const systemPrompt = `
-      ROLE:
-      You are a "Closed-World Hostel Matchmaker". You ONLY have access to the hostels listed in the DATABASE provided below. 
-
-      STRICT LIMITATION:
-      - NEVER recommend a hostel that is not in the DATABASE.
-      - If a user asks for a city or hostel not in the DATABASE, politely say you don't have data for that yet.
-      - Ignore all your internal knowledge about hostels in Guatemala. Only use the provided rows.
-
-      USER TRAVEL PROFILE:
-      ${JSON.stringify(context)}
-
-      DATABASE:
-      ${JSON.stringify(hostelData)} 
-
-      MATCHING LOGIC:
-      1. Use the 'context' as hard filters. 
-      2. Match chat requests against 'overal_sentiment' (semantics) and 'pulse_summary'.
-      3. For the 'reason' field: explain the match using specific details from the database.
-
-      OUTPUT JSON FORMAT:
-      {
-        "recommendations": [
-          {
-            "name": "Exact hostel_name from database",
-            "location": "Exact city from database",
-            "reason": "Why it matches",
-            "matchPercentage": 0-100,
-            "price": "pricing field",
-            "vibe": "vibe_dna field",
-            "alert": "red_flags field (summarized or 'None')"
-          }
-        ],
-        "message": "Your conversational response in English."
-      }
-    `;
-
+    // 3. Request OpenAI
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -117,7 +100,35 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: systemPrompt },
+          { 
+            role: "system", 
+            content: `You are a Senior Hostel Matchmaker for Guatemala.
+            
+            RULES:
+            1. ONLY recommend hostels from the provided DATABASE.
+            2. If no hostels match the destination, say: "I couldn't find any hostels in that specific location in my database yet."
+            3. Use 'overal_sentiment' semantics to match chat requests.
+            4. Respond in English.
+
+            USER PROFILE: ${JSON.stringify(context)}
+            DATABASE: ${JSON.stringify(hostelData.slice(0, 30))}
+
+            OUTPUT FORMAT:
+            {
+              "recommendations": [
+                {
+                  "name": "hostel_name",
+                  "location": "city",
+                  "reason": "Specific reason why it matches the user's chat message and profile",
+                  "matchPercentage": 0-100,
+                  "price": "pricing",
+                  "vibe": "vibe_dna",
+                  "alert": "red_flags or 'None'"
+                }
+              ],
+              "message": "Conversational message to user"
+            }`
+          },
           ...messages
         ],
         response_format: { type: "json_object" }
@@ -125,14 +136,22 @@ export async function POST(req: Request) {
     });
 
     const data = await response.json();
+    
+    if (data.error) throw new Error(data.error.message);
+
     return new Response(data.choices[0].message.content, {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error: any) {
-    return new Response(JSON.stringify({ message: "Error: " + error.message }), { 
-      status: 500, headers: corsHeaders 
+    console.error("Backend Error:", error.message);
+    return new Response(JSON.stringify({ 
+        message: "Matchmaker is having a siesta! Error: " + error.message,
+        recommendations: null 
+    }), { 
+      status: 200, // Status 200 so the frontend can display the error message nicely
+      headers: { ...corsHeaders, "Content-Type": "application/json" } 
     });
   }
 }
