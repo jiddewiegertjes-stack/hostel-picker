@@ -1,56 +1,13 @@
-export const runtime = "edge";
-
-const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-};
-
-const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
-
-export async function OPTIONS() {
-    return new Response(null, { status: 204, headers: corsHeaders });
-}
-
-function parseCSV(csvText: string) {
-    if (!csvText || csvText.length < 10) return [];
-    
-    const cleanText = csvText.trim().replace(/^\uFEFF/, "");
-    
-    const rows: string[][] = [];
-    let currCell = ""; let currRow: string[] = []; let inQuotes = false;
-    for (let i = 0; i < cleanText.length; i++) {
-        const char = cleanText[i]; const nextChar = cleanText[i + 1];
-        if (char === '"' && inQuotes && nextChar === '"') { currCell += '"'; i++; }
-        else if (char === '"') { inQuotes = !inQuotes; }
-        else if (char === ',' && !inQuotes) { currRow.push(currCell.trim()); currCell = ""; }
-        else if (char === '\n' && !inQuotes) { currRow.push(currCell.trim()); rows.push(currRow); currRow = []; currCell = ""; }
-        else { currCell += char; }
-    }
-    if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
-
-    const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
-    
-    return rows.slice(1).map(row => {
-        const obj: any = {};
-        headers.forEach((header, i) => {
-            let val = row[i] || "";
-            if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
-            if (val.includes('{') && val.includes('}')) {
-                try { const sanitized = val.replace(/""/g, '"'); obj[header] = JSON.parse(sanitized); }
-                catch (e) { obj[header] = val; }
-            } else { obj[header] = val; }
-        });
-        return obj;
-    }).filter(h => h.hostel_name && h.hostel_name.length > 1);
-}
-
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
 
-        const cacheBuster = SHEET_CSV_URL.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
-        const sheetRes = await fetch(SHEET_CSV_URL + cacheBuster);
+        // OPTIMALISATIE 1: Caching
+        // We verwijderen de cacheBuster (?t=...) en gebruiken Next.js revalidation
+        // Dit zorgt ervoor dat hij niet voor elk request naar Google Sheets hoeft.
+        const sheetRes = await fetch(SHEET_CSV_URL, {
+            next: { revalidate: 3600 } // Cache data voor 1 uur (3600s)
+        });
         
         const csvRaw = await sheetRes.text();
         const hostelData = parseCSV(csvRaw);
@@ -63,7 +20,13 @@ export async function POST(req: Request) {
             return cityInSheet === userCity;
         });
         
-        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
+        // OPTIMALISATIE 2: Beperk de pool tot 15 (25 is te zwaar voor snelle response)
+        const fullPool = finalData.length > 0 ? finalData : hostelData.slice(0, 15);
+        const limitedPool = fullPool.slice(0, 15);
+
+        // OPTIMALISATIE 3: "Lean" Payload voor AI
+        // De AI heeft de image URL niet nodig om te oordelen. Dit scheelt enorm veel input tokens.
+        const aiPayload = limitedPool.map(({ hostel_img, ...rest }) => rest);
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -73,6 +36,7 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
+                        // Let op: Instructie over images is aangepast, de code doet dit nu.
                         content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
 
 Return EXACTLY 3 recommendations from the provided database that best fit the user context."
@@ -99,56 +63,44 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
                         - Penalty: Deduct points gradually as the price moves further away (higher OR lower) from the estimate.
 
                         NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
-                        1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user.
+                        1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' is already provided.
                         2. DO NOT ASK for info already in USER CONTEXT.
-                        3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting or vague statement.
-                        4. SMART START: If the user says "show me the best spots" or similar, IMMEDIATELY perform the audit based on Profile Data.
-                        5. QUESTIONS: Focus only on "The Soul of the Trip" (specific social needs or work setup) not found in buttons.
+                        3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting.
+                        4. SMART START: If the user says "show me the best spots", IMMEDIATELY perform the audit.
 
                         STRICT RULES:
-                        - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
+                        - RED FLAGS: List them strictly in the 'alert' field.
                         - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
                         - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
-                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Sentiment, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
-                        Format example: "Price: (95% * 1.0) + Sentiment: (90% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
+                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation including ALL categories.
 
-                        DATABASE: ${JSON.stringify(pool)}
+                        DATABASE: ${JSON.stringify(aiPayload)}
                         USER CONTEXT: ${JSON.stringify(context)}
-
-                        AUDIT REQUIREMENTS:
-                        For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
-                        - Price: user.maxPrice vs csv.pricing (Proximity check)
-                        - Sentiment: analysis of csv.overal_sentiment.score (Weight 1.0)
-                        - Noise: user.noiseLevel (1-100) vs csv.noise_level
-                        - Vibe: user.vibe vs csv.vibe_dna
-                        - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
-                        - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
-                        - Images: Extract the EXACT URL from csv.hostel_img and place it in the hostel_img field.
 
                         OUTPUT JSON STRUCTURE:
                         {
                           "recommendations": [
                             {
-                              "name": "hostel_name",
+                              "name": "hostel_name (MUST MATCH DATABASE NAME EXACTLY)",
                               "location": "city",
                               "matchPercentage": 0-100,
                               "price": "pricing",
                               "vibe": "vibe_dna",
-                              "hostel_img": "EXACT URL FROM csv.hostel_img",
                               "alert": "red_flags or 'None'",
+                              "reason": "Why is this a match?",
                               "audit_log": {
-                                "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
-                                "price_logic": "Weight 1.0 Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
-                                "sentiment_logic": "Weight 1.0: Analysis of overall sentiment score from csv.overal_sentiment.",
-                                "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
-                                "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
-                                "trade_off_analysis": "Expert contrast: Nomad (0.9) vs Solo (0.7).",
+                                "score_breakdown": "Price: (X% * 1.0) + ... = Total Match%",
+                                "price_logic": "...",
+                                "sentiment_logic": "...",
+                                "noise_logic": "...",
+                                "vibe_logic": "...",
+                                "trade_off_analysis": "...",
                                 "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
                                 "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
                                 "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
                                 "solo_proof": "Weight 0.7: data from csv.solo_verdict",
-                                "demographic_logic": "Weight 0.2: Compare user age (${context.age}) with typical age group from csv.overal_age."
+                                "demographic_logic": "..."
                               }
                             }
                           ],
@@ -162,9 +114,23 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
         });
 
         const aiData = await response.json();
-        const content = aiData.choices[0].message.content;
+        const parsedContent = JSON.parse(aiData.choices[0].message.content);
         
-        return new Response(content, {
+        // OPTIMALISATIE 4: Re-hydration / Merging
+        // We plakken de images (die we niet naar de AI stuurden) weer terug aan de output.
+        if (parsedContent.recommendations) {
+            parsedContent.recommendations = parsedContent.recommendations.map((rec: any) => {
+                // Zoek het originele hostel object (met image url) in de fullPool
+                const original = limitedPool.find(h => h.hostel_name === rec.name);
+                return {
+                    ...rec,
+                    // Voeg image toe als we hem vinden, anders fallback
+                    hostel_img: original?.hostel_img || "" 
+                };
+            });
+        }
+
+        return new Response(JSON.stringify(parsedContent), {
             status: 200, headers: corsHeaders 
         });
 
