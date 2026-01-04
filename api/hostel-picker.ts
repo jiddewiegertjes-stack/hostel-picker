@@ -63,7 +63,8 @@ export async function POST(req: Request) {
             return cityInSheet === userCity;
         });
         
-        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
+        // Aangepast: pool beperkt tot maximaal 10 hostels om GPT-load te verminderen
+        const pool = finalData.length > 0 ? finalData.slice(0, 10) : hostelData.slice(0, 10);
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
