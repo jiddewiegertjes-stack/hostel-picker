@@ -47,6 +47,7 @@ export async function POST(req: Request) {
         const body = await req.json();
         const { messages, context } = body;
 
+        // Fetch & Select top candidates first (Speed optimization)
         const cacheBuster = SHEET_CSV_URL.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
         const sheetRes = await fetch(SHEET_CSV_URL + cacheBuster);
         const csvRaw = await sheetRes.text();
@@ -58,6 +59,7 @@ export async function POST(req: Request) {
         let filtered = hostelData.filter(h => (h.city || "").toLowerCase().trim() === userCity);
         if (filtered.length === 0) filtered = hostelData.slice(0, 10);
 
+        // Pre-sort to get the best 3 to audit in parallel
         filtered.sort((a, b) => {
             const priceA = parseFloat(String(a.pricing).replace(/[^0-9.]/g, '')) || 0;
             const priceB = parseFloat(String(b.pricing).replace(/[^0-9.]/g, '')) || 0;
@@ -65,17 +67,7 @@ export async function POST(req: Request) {
         });
         const top3 = filtered.slice(0, 3);
 
-        // Veilig parsen van AI antwoorden om 'undefined' errors te voorkomen
-        const safeParseJSON = (data: any) => {
-            try {
-                if (!data?.choices?.[0]?.message?.content) return null;
-                const content = data.choices[0].message.content;
-                return JSON.parse(content.replace(/```json/g, "").replace(/```/g, "").trim());
-            } catch (e) {
-                return null;
-            }
-        };
-
+        // Create the parallel Audit functions
         const auditHostel = async (hostel: any) => {
             const res = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
@@ -85,8 +77,35 @@ export async function POST(req: Request) {
                     messages: [
                         { 
                             role: "system", 
-                            content: `You are an Expert Auditor. Audit THIS SPECIFIC HOSTEL. Return ONLY valid JSON.
-                            Weights: Price: 1.0, Sentiment: 1.0, Nomad: 0.9, Vibe: 0.8, Solo: 0.7, Noise: 0.3, Rooms: 0.3, Age: 0.2.
+                            content: `You are an Expert Auditor. Audit THIS SPECIFIC HOSTEL for the user.
+                            
+                            SCORING (Weights): Price: 1.0, Sentiment: 1.0, Nomad: 0.9, Vibe: 0.8, Solo: 0.7, Noise: 0.3, Rooms: 0.3, Age: 0.2.
+                            
+                            Return a JSON object:
+                            {
+                                "name": "hostel_name",
+                                "location": "city",
+                                "matchPercentage": 0-100,
+                                "price": "pricing",
+                                "vibe": "vibe_dna",
+                                "hostel_img": "EXACT URL",
+                                "alert": "red_flags or 'None'",
+                                "audit_log": {
+                                    "score_breakdown": "Price: (X% * 1.0) + ... = Total Match%",
+                                    "price_logic": "...",
+                                    "sentiment_logic": "...",
+                                    "noise_logic": "...",
+                                    "vibe_logic": "...",
+                                    "trade_off_analysis": "Focus on the balance of this specific hostel's features.",
+                                    "pulse_summary_proof": "csv.pulse_summary",
+                                    "sentiment_proof": "csv.overal_sentiment",
+                                    "facility_proof": "csv.facilities",
+                                    "nomad_proof": "csv.digital_nomad_score",
+                                    "solo_proof": "csv.solo_verdict",
+                                    "demographic_logic": "Age match logic"
+                                }
+                            }
+                            
                             DATABASE ENTRY: ${JSON.stringify(hostel)}
                             USER CONTEXT: ${JSON.stringify(context)}`
                         }
@@ -95,17 +114,24 @@ export async function POST(req: Request) {
                 }),
             });
             const data = await res.json();
-            return safeParseJSON(data);
+            
+            // FIX: Check if choices exists before accessing [0]
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                return null;
+            }
+            try {
+                return JSON.parse(data.choices[0].message.content);
+            } catch (e) {
+                return null;
+            }
         };
 
-        // Parallelle uitvoering met filter om mislukte audits te verwijderen
-        const results = await Promise.all(top3.map(h => auditHostel(h)));
-        const recommendations = results.filter(r => r !== null);
+        // Execution: Audit 3 hostels in parallel (Point 1, 2, 3)
+        // FIX: Handle potential nulls from failed audits
+        const rawResults = await Promise.all(top3.map(h => auditHostel(h)));
+        const recommendations = rawResults.filter(r => r !== null);
 
-        if (recommendations.length === 0) {
-            throw new Error("No valid audits could be generated.");
-        }
-
+        // Execution: Prompt 4 - Final Comparison Message (The 'Glue')
         const finalMessageRes = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -114,17 +140,23 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
-                        content: "You are the 'Straight-Talking Traveler'. Compare these audits and return a JSON with a 'message' field." 
+                        content: "You are the 'Straight-Talking Traveler'. Look at these 3 audited hostels and write a short, direct comparison/advice message for the user. Do not ask questions already answered in context." 
                     },
                     { role: "user", content: `Audits: ${JSON.stringify(recommendations)}. Context: ${JSON.stringify(context)}` }
                 ],
                 response_format: { type: "json_object" }
             }),
         });
+        const finalMessageData = await finalMessageRes.json();
         
-        const finalData = await finalMessageRes.json();
-        const finalParsed = safeParseJSON(finalData);
-        const finalMessage = finalParsed?.message || "Here are the best matches based on your profile.";
+        // FIX: Safe access to final message
+        let finalMessage = "Here are the best matches based on your profile.";
+        if (finalMessageData.choices && finalMessageData.choices[0] && finalMessageData.choices[0].message) {
+             try {
+                const parsedContent = JSON.parse(finalMessageData.choices[0].message.content);
+                if (parsedContent.message) finalMessage = parsedContent.message;
+             } catch (e) {}
+        }
 
         return new Response(JSON.stringify({
             recommendations: recommendations,
