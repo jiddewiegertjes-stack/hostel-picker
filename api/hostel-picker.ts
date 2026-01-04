@@ -63,8 +63,7 @@ export async function POST(req: Request) {
             return cityInSheet === userCity;
         });
         
-        // Aangepast: pool beperkt tot maximaal 10 hostels om GPT-load te verminderen
-        const pool = finalData.length > 0 ? finalData.slice(0, 10) : hostelData.slice(0, 10);
+        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -76,7 +75,7 @@ export async function POST(req: Request) {
                         role: "system", 
                         content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
 
-"Keep the audit_log descriptions extremely concise (max 15 words per field). Do not repeat yourself. Speed is priority. Return EXACTLY 3 recommendations from the provided database that best fit the user context."
+Return EXACTLY 3 recommendations from the provided database that best fit the user context."
 
                         SCORING INDICES (Weights):
                         Assign points using these specific multipliers:
