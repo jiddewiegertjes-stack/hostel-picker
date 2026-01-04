@@ -76,6 +76,8 @@ export async function POST(req: Request) {
                         role: "system", 
                         content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
 
+"Keep the audit_log descriptions extremely concise (max 15 words per field). Do not repeat yourself. Speed is priority."
+
                         SCORING INDICES (Weights):
                         Assign points using these specific multipliers:
                         - Pricing: 1.0 (Target Proximity)
