@@ -8,15 +8,18 @@ const corsHeaders = {
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
+// Cache in-memory voor Edge (Point 2)
+let cachedCSV: any[] | null = null;
+let lastFetch = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minuten
+
 export async function OPTIONS() {
     return new Response(null, { status: 204, headers: corsHeaders });
 }
 
 function parseCSV(csvText: string) {
     if (!csvText || csvText.length < 10) return [];
-    
     const cleanText = csvText.trim().replace(/^\uFEFF/, "");
-    
     const rows: string[][] = [];
     let currCell = ""; let currRow: string[] = []; let inQuotes = false;
     for (let i = 0; i < cleanText.length; i++) {
@@ -28,9 +31,7 @@ function parseCSV(csvText: string) {
         else { currCell += char; }
     }
     if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
-
     const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
-    
     return rows.slice(1).map(row => {
         const obj: any = {};
         headers.forEach((header, i) => {
@@ -48,28 +49,43 @@ function parseCSV(csvText: string) {
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
-
-        const cacheBuster = SHEET_CSV_URL.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
-        const sheetRes = await fetch(SHEET_CSV_URL + cacheBuster);
-        
-        const csvRaw = await sheetRes.text();
-        const hostelData = parseCSV(csvRaw);
         const body = await req.json();
         const { messages, context } = body;
 
+        // Point 2: Cache logic
+        const now = Date.now();
+        if (!cachedCSV || (now - lastFetch > CACHE_TTL)) {
+            const cacheBuster = SHEET_CSV_URL.includes('?') ? `&t=${now}` : `?t=${now}`;
+            const sheetRes = await fetch(SHEET_CSV_URL + cacheBuster);
+            const csvRaw = await sheetRes.text();
+            cachedCSV = parseCSV(csvRaw);
+            lastFetch = now;
+        }
+
         const userCity = (context?.destination || "").toLowerCase().trim();
-        const finalData = hostelData.filter(h => {
+        const userMaxPrice = Number(context?.maxPrice) || 40;
+
+        let finalData = cachedCSV.filter(h => {
             const cityInSheet = (h.city || "").toLowerCase().trim();
             return cityInSheet === userCity;
         });
-        
-        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
 
+        // Point 3: Smart Pool reduction (Sort by price proximity and take top 10)
+        finalData.sort((a, b) => {
+            const priceA = parseFloat(String(a.pricing).replace(/[^0-9.]/g, '')) || 0;
+            const priceB = parseFloat(String(b.pricing).replace(/[^0-9.]/g, '')) || 0;
+            return Math.abs(priceA - userMaxPrice) - Math.abs(priceB - userMaxPrice);
+        });
+
+        const pool = finalData.length > 0 ? finalData.slice(0, 10) : cachedCSV.slice(0, 10);
+
+        // Point 1: Stream the response
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({
                 model: "gpt-4o-mini",
+                stream: true, // Enable streaming
                 messages: [
                     { 
                         role: "system", 
@@ -161,11 +177,13 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
             }),
         });
 
-        const aiData = await response.json();
-        const content = aiData.choices[0].message.content;
-        
-        return new Response(content, {
-            status: 200, headers: corsHeaders 
+        // Return direct stream for speed
+        return new Response(response.body, {
+            status: 200, 
+            headers: { 
+                ...corsHeaders,
+                "Content-Type": "text/event-stream"
+            } 
         });
 
     } catch (error: any) {
