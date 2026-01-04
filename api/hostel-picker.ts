@@ -1,32 +1,82 @@
+export const runtime = "edge";
+
+const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+};
+
+const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
+
+export async function OPTIONS() {
+    return new Response(null, { status: 204, headers: corsHeaders });
+}
+
+// Jouw originele CSV parser (ongewijzigd)
+function parseCSV(csvText: string) {
+    if (!csvText || csvText.length < 10) return [];
+    
+    const cleanText = csvText.trim().replace(/^\uFEFF/, "");
+    
+    const rows: string[][] = [];
+    let currCell = ""; let currRow: string[] = []; let inQuotes = false;
+    for (let i = 0; i < cleanText.length; i++) {
+        const char = cleanText[i]; const nextChar = cleanText[i + 1];
+        if (char === '"' && inQuotes && nextChar === '"') { currCell += '"'; i++; }
+        else if (char === '"') { inQuotes = !inQuotes; }
+        else if (char === ',' && !inQuotes) { currRow.push(currCell.trim()); currCell = ""; }
+        else if (char === '\n' && !inQuotes) { currRow.push(currCell.trim()); rows.push(currRow); currRow = []; currCell = ""; }
+        else { currCell += char; }
+    }
+    if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
+
+    const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
+    
+    return rows.slice(1).map(row => {
+        const obj: any = {};
+        headers.forEach((header, i) => {
+            let val = row[i] || "";
+            if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+            if (val.includes('{') && val.includes('}')) {
+                try { const sanitized = val.replace(/""/g, '"'); obj[header] = JSON.parse(sanitized); }
+                catch (e) { obj[header] = val; }
+            } else { obj[header] = val; }
+        });
+        return obj;
+    }).filter(h => h.hostel_name && h.hostel_name.length > 1);
+}
+
 export async function POST(req: Request) {
     try {
+        console.log("🚀 Start Request");
         const apiKey = process.env.OPENAI_API_KEY;
 
-        // OPTIMALISATIE 1: Caching
-        // We verwijderen de cacheBuster (?t=...) en gebruiken Next.js revalidation
-        // Dit zorgt ervoor dat hij niet voor elk request naar Google Sheets hoeft.
-        const sheetRes = await fetch(SHEET_CSV_URL, {
-            next: { revalidate: 3600 } // Cache data voor 1 uur (3600s)
-        });
+        // STAP 1: Haal data op (Cache voor 5 min om crashes te voorkomen, niet te agressief)
+        const sheetRes = await fetch(SHEET_CSV_URL, { next: { revalidate: 300 } }); 
+        if (!sheetRes.ok) throw new Error("Failed to fetch CSV");
         
         const csvRaw = await sheetRes.text();
         const hostelData = parseCSV(csvRaw);
+        console.log(`📊 CSV Loaded: ${hostelData.length} rows`);
+
         const body = await req.json();
         const { messages, context } = body;
 
+        // Filter op stad
         const userCity = (context?.destination || "").toLowerCase().trim();
         const finalData = hostelData.filter(h => {
             const cityInSheet = (h.city || "").toLowerCase().trim();
             return cityInSheet === userCity;
         });
         
-        // OPTIMALISATIE 2: Beperk de pool tot 15 (25 is te zwaar voor snelle response)
+        // STAP 2: Maak de pool kleiner en "Lean"
         const fullPool = finalData.length > 0 ? finalData : hostelData.slice(0, 15);
         const limitedPool = fullPool.slice(0, 15);
 
-        // OPTIMALISATIE 3: "Lean" Payload voor AI
-        // De AI heeft de image URL niet nodig om te oordelen. Dit scheelt enorm veel input tokens.
+        // Verwijder plaatjes en zware velden voor de AI payload
         const aiPayload = limitedPool.map(({ hostel_img, ...rest }) => rest);
+
+        console.log("🤖 Sending to OpenAI...");
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -36,7 +86,6 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
-                        // Let op: Instructie over images is aangepast, de code doet dit nu.
                         content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
 
 Return EXACTLY 3 recommendations from the provided database that best fit the user context."
@@ -114,27 +163,51 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
         });
 
         const aiData = await response.json();
-        const parsedContent = JSON.parse(aiData.choices[0].message.content);
         
-        // OPTIMALISATIE 4: Re-hydration / Merging
-        // We plakken de images (die we niet naar de AI stuurden) weer terug aan de output.
-        if (parsedContent.recommendations) {
+        // ERROR CHECK: Check of OpenAI wel iets teruggaf
+        if (!aiData.choices || !aiData.choices[0]) {
+            throw new Error("OpenAI returned empty response");
+        }
+
+        const rawContent = aiData.choices[0].message.content;
+        
+        // STAP 3: CLEANING (Dit is cruciaal, hier ging het waarschijnlijk mis)
+        // Verwijder markdown ```json ... ``` wrappers die OpenAI vaak toevoegt
+        const cleanJson = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+        
+        let parsedContent;
+        try {
+            parsedContent = JSON.parse(cleanJson);
+        } catch (e) {
+            console.error("JSON Parse Error. Raw content:", rawContent);
+            throw new Error("AI returned invalid JSON");
+        }
+        
+        // STAP 4: Re-hydration / Merging (Plaatjes terugzetten)
+        if (parsedContent.recommendations && Array.isArray(parsedContent.recommendations)) {
             parsedContent.recommendations = parsedContent.recommendations.map((rec: any) => {
-                // Zoek het originele hostel object (met image url) in de fullPool
-                const original = limitedPool.find(h => h.hostel_name === rec.name);
+                // Zoek het originele hostel object (case insensitive)
+                const recName = (rec.name || "").toLowerCase();
+                const original = limitedPool.find(h => (h.hostel_name || "").toLowerCase().includes(recName) || recName.includes((h.hostel_name || "").toLowerCase()));
+                
                 return {
                     ...rec,
-                    // Voeg image toe als we hem vinden, anders fallback
-                    hostel_img: original?.hostel_img || "" 
+                    hostel_img: original?.hostel_img || "" // Zet de image URL terug
                 };
             });
         }
+
+        console.log("✅ Success! Returning data.");
 
         return new Response(JSON.stringify(parsedContent), {
             status: 200, headers: corsHeaders 
         });
 
     } catch (error: any) {
-        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
+        console.error("❌ BACKEND ERROR:", error);
+        return new Response(JSON.stringify({ 
+            message: "System Error: " + error.message + ". Check Vercel Logs.", 
+            recommendations: null 
+        }), { status: 200, headers: corsHeaders });
     }
 }
