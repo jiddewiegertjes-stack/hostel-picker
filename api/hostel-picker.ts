@@ -121,6 +121,7 @@ export async function POST(req: Request) {
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
                         - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
+                        - Images: Extract the EXACT URL from csv.hostel_img and place it in the hostel_img field.
 
                         OUTPUT JSON STRUCTURE:
                         {
@@ -131,6 +132,7 @@ export async function POST(req: Request) {
                               "matchPercentage": 0-100,
                               "price": "pricing",
                               "vibe": "vibe_dna",
+                              "hostel_img": "EXACT URL FROM csv.hostel_img",
                               "alert": "red_flags or 'None'",
                               "audit_log": {
                                 "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
