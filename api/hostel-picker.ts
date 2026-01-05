@@ -73,28 +73,29 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are the Matchmaker Engine. Your ONLY job is to select the 3 best hostels and calculate their scores.
+                        content: `You are the Expert Hostel Matchmaker. Select EXACTLY 3 recommendations.
+                        
+                        SPEED PROTOCOL: 
+                        1. Select hostels based on DATABASE.
+                        2. Return ONLY JSON. 
+                        3. DO NOT repeat CSV data fields like images, location, or full vibe descriptions in the JSON structure. 
+                        4. The frontend will populate these fields using the 'name'.
+                        
+                        OUTPUT JSON STRUCTURE:
+                        {
+                          "recommendations": [
+                            {
+                              "name": "exact_hostel_name_from_csv",
+                              "matchPercentage": 0-100,
+                              "reason": "One very short direct sentence.",
+                              "score_breakdown": "P:X% + S:Y% + N:Z% + V:A% + So:B% + No:C% + R:D% + A:E% = Total%"
+                            }
+                          ],
+                          "message": "Direct strategic advice (max 15 words)."
+                        }
 
-Return EXACTLY 3 recommendations. DO NOT return raw data like facilities, nomad scores, images, or vibe_dna text. The frontend has the database.
-
-SCORING INDICES (Weights):
-- Pricing: 1.0, Sentiment: 1.0, Nomad: 0.9, Vibe: 0.8, Solo: 0.7, Noise: 0.3, Rooms: 0.3, Age: 0.2.
-
-OUTPUT JSON STRUCTURE:
-{
-  "recommendations": [
-    {
-      "name": "hostel_name (MUST match the CSV exactly)",
-      "matchPercentage": 0-100,
-      "reason": "1 short direct sentence why it matches.",
-      "score_breakdown": "P:X% + V:Y% + N:Z% = Total Match%"
-    }
-  ],
-  "message": "Strategic advice (max 20 words)."
-}
-
-DATABASE: ${JSON.stringify(pool)}
-USER CONTEXT: ${JSON.stringify(context)}`
+                        DATABASE: ${JSON.stringify(pool)}
+                        USER CONTEXT: ${JSON.stringify(context)}`
                     },
                     ...messages
                 ],
@@ -104,17 +105,22 @@ USER CONTEXT: ${JSON.stringify(context)}`
         });
 
         const aiData = await response.json();
-        const aiContent = JSON.parse(aiData.choices[0].message.content);
+        const content = JSON.parse(aiData.choices[0].message.content);
         
-        // We voegen de 'pool' (de database rijen) toe aan de response zodat de frontend de data kan koppelen.
+        // We sturen de AI resultaten én de raw database rijen terug voor de frontend hydration
         return new Response(JSON.stringify({
-            ...aiContent,
-            rawDatabase: pool
+            recommendations: content.recommendations || [],
+            message: content.message || "",
+            rawDatabase: pool 
         }), {
             status: 200, headers: corsHeaders 
         });
 
     } catch (error: any) {
-        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
+        return new Response(JSON.stringify({ 
+            message: "System Error: " + error.message, 
+            recommendations: [], 
+            rawDatabase: [] 
+        }), { status: 200, headers: corsHeaders });
     }
 }
