@@ -128,8 +128,7 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
 
                         STRICT RULES:
                         - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
-                        - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for facilities, nomad, solo, pulse, and sentiment proofs.
-                        - TRADE-OFF ANALYSIS: In the audit_log, contrast the Digital Nomad quality with the Solo Traveler social vibe.
+                        - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for nomad, solo, pulse, and sentiment proofs.
                         - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Sentiment, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
                         Format example: "Price: (95% * 1.0) + Sentiment: (90% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
 
@@ -143,7 +142,7 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
                         - Noise: user.noiseLevel (1-100) vs csv.noise_level
                         - Vibe: user.vibe vs csv.vibe_dna
                         - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
-                        - Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
+                        - Proofs: Extract EXACT text from csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
                         - Images: Extract the EXACT URL from csv.hostel_img and place it in the hostel_img field.
 
                         OUTPUT JSON STRUCTURE:
@@ -159,22 +158,20 @@ Return EXACTLY 3 recommendations from the provided database that best fit the us
                               "alert": "red_flags or 'None'",
                               "audit_log": {
                                 "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
-                                "price_logic": "Weight 1.0 Target proximity analysis: User estimated €${context.maxPrice}, hostel is €pricing.",
                                 "sentiment_logic": "Weight 1.0: Analysis of overall sentiment score from csv.overal_sentiment.",
-                                "noise_logic": "Weight 0.3: user ${context.noiseLevel} vs csv.noise_level.",
                                 "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
-                                "trade_off_analysis": "Expert contrast: Nomad (0.9) vs Solo (0.7).",
                                 "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
                                 "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
-                                "facility_proof": "RAW DATA FROM csv.facilities COLUMN",
                                 "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
-                                "solo_proof": "Weight 0.7: data from csv.solo_verdict",
-                                "demographic_logic": "Weight 0.2: Compare user age (${context.age}) with typical age group from csv.overal_age."
+                                "solo_proof": "Weight 0.7: data from csv.solo_verdict"
                               }
                             }
                           ],
                           "message": "Strategic advice or clarifying questions."
-                        }`
+                        }
+
+                        IMPORTANT FRONTEND RULE:
+                        Do NOT include these fields in the response audit_log (they are used for internal calculation only): price_logic, noise_logic, demographic_logic, facility_proof, trade_off_analysis.`
                     },
                     ...messages
                 ],
