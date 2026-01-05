@@ -45,6 +45,85 @@ function parseCSV(csvText: string) {
     }).filter(h => h.hostel_name && h.hostel_name.length > 1);
 }
 
+// --- Shortlist helpers (added) ---
+function clamp(n: number, min = 0, max = 100) {
+    return Math.max(min, Math.min(max, n));
+}
+
+function toNumber(val: any, fallback = 0) {
+    if (typeof val === "number" && Number.isFinite(val)) return val;
+    const n = parseFloat(String(val ?? "").replace(/[^0-9.]/g, ""));
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function priceProximityScore(actualPrice: number, targetPrice: number) {
+    if (!actualPrice || !targetPrice) return 50;
+    const pctDiff = Math.abs(actualPrice - targetPrice) / targetPrice;
+    const sigma = 0.25; // bell-ish width
+    const score = 100 * Math.exp(-(pctDiff * pctDiff) / (2 * sigma * sigma));
+    return clamp(score);
+}
+
+function vibeMatchScore(hostelVibe: string, userVibe: string) {
+    const hv = (hostelVibe || "").toLowerCase();
+    const uv = (userVibe || "").toLowerCase();
+    if (!hv || !uv) return 50;
+    if (hv.includes(uv) || uv.includes(hv)) return 95;
+
+    const buckets: Record<string, string[]> = {
+        party: ["party", "very social"],
+        quiet: ["quiet", "chill", "relaxed"],
+        nomad: ["nomad", "digital"],
+        solo: ["solo"],
+        social: ["social"],
+    };
+    const inBucket = (s: string, keys: string[]) => keys.some(k => s.includes(k));
+    for (const key of Object.keys(buckets)) {
+        if (inBucket(hv, buckets[key]) && inBucket(uv, buckets[key])) return 85;
+    }
+    return 55;
+}
+
+function noiseMatchScore(hostelNoise: number, userNoise: number) {
+    const diff = Math.abs(hostelNoise - userNoise);
+    return clamp(100 - diff);
+}
+
+function shortlistScore(h: any, context: any) {
+    const price = toNumber(h.pricing, 0);
+    const target = toNumber(context?.maxPrice, 0);
+
+    const sentimentScore = toNumber(h.overal_sentiment?.score ?? h.overal_sentiment_score, 50);
+
+    const nomadRaw = h.digital_nomad_score?.score ?? h.digital_nomad_score;
+    const nomadScore = toNumber(nomadRaw, 50);
+
+    const soloRaw = h.solo_verdict?.rank ?? h.solo_rank;
+    const soloScore = clamp(toNumber(soloRaw, 5) * 10);
+
+    const noise = toNumber(h.noise_level, 50);
+
+    const priceS = priceProximityScore(price, target);
+    const vibeS = vibeMatchScore(h.vibe_dna, context?.vibe);
+    const noiseS = noiseMatchScore(noise, toNumber(context?.noiseLevel, 50));
+
+    const roomsS = 50;
+    const ageS = 50;
+
+    const total =
+        priceS * 1.0 +
+        sentimentScore * 1.0 +
+        nomadScore * 0.9 +
+        vibeS * 0.8 +
+        soloScore * 0.7 +
+        noiseS * 0.3 +
+        roomsS * 0.3 +
+        ageS * 0.2;
+
+    return total;
+}
+// --- End shortlist helpers ---
+
 export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
@@ -63,7 +142,15 @@ export async function POST(req: Request) {
             return cityInSheet === userCity;
         });
         
-        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
+        const poolBase = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
+
+        // --- Shortlist (added) ---
+        const pool = [...poolBase]
+            .map(h => ({ h, s: shortlistScore(h, context) }))
+            .sort((a, b) => b.s - a.s)
+            .slice(0, 10)
+            .map(x => x.h);
+        // --- End shortlist ---
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
