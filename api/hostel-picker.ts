@@ -8,6 +8,12 @@ const corsHeaders = {
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
+/** ---- Simple in-memory cache (Edge warm instance) ---- */
+let cachedCsvRaw: string | null = null;
+let cachedHostelData: any[] | null = null;
+let cacheUpdatedAt = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export async function OPTIONS() {
     return new Response(null, { status: 204, headers: corsHeaders });
 }
@@ -57,15 +63,36 @@ export async function POST(req: Request) {
         const apiKey = process.env.OPENAI_API_KEY;
 
         tSheetStart = Date.now();
-        const cacheBuster = SHEET_CSV_URL.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
-        const sheetRes = await fetch(SHEET_CSV_URL + cacheBuster);
-        
-        const csvRaw = await sheetRes.text();
-        tSheetEnd = Date.now();
 
-        tParseStart = Date.now();
-        const hostelData = parseCSV(csvRaw);
-        tParseEnd = Date.now();
+        const now = Date.now();
+        const cacheFresh = cachedHostelData && (now - cacheUpdatedAt) < CACHE_TTL_MS;
+
+        let hostelData: any[] = [];
+
+        if (cacheFresh) {
+            hostelData = cachedHostelData as any[];
+            tSheetEnd = Date.now();
+            tParseStart = Date.now();
+            tParseEnd = Date.now();
+        } else {
+            // Punt 1: geen cacheBuster meer, zodat upstream caching kan werken
+            const sheetRes = await fetch(SHEET_CSV_URL, {
+                cache: "force-cache",
+                headers: { "Cache-Control": "max-age=300" }
+            });
+            
+            const csvRaw = await sheetRes.text();
+            tSheetEnd = Date.now();
+
+            tParseStart = Date.now();
+            hostelData = parseCSV(csvRaw);
+            tParseEnd = Date.now();
+
+            // Punt 2: cache parsed data in memory (warm edge instance)
+            cachedCsvRaw = csvRaw;
+            cachedHostelData = hostelData;
+            cacheUpdatedAt = now;
+        }
 
         tReqJsonStart = Date.now();
         const body = await req.json();
