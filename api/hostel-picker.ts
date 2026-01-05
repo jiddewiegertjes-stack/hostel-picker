@@ -107,8 +107,8 @@ NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
 
 STRICT RULES:
 - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
-- MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Sentiment, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
-Format example: "Price: (95% * 1.0) + Sentiment: (90% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
+- DATABASE PROOF: You MUST provide RAW DATA from the spreadsheet for nomad, solo, pulse, and sentiment proofs so the user can verify the data.
+- MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation.
 
 DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
@@ -129,7 +129,12 @@ OUTPUT JSON STRUCTURE:
       "hostel_img": "EXACT URL FROM csv.hostel_img",
       "alert": "red_flags or 'None'",
       "audit_log": {
-        "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%"
+        "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
+        "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
+        "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
+        "solo_proof": "RAW DATA FROM csv.solo_verdict",
+        "nomad_proof": "RAW DATA FROM csv.digital_nomad_score",
+        "vibe_logic": "Brief comparison of user.vibe vs csv.vibe_dna"
       }
     }
   ],
