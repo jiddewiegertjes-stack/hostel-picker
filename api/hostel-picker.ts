@@ -12,6 +12,21 @@ export async function OPTIONS() {
     return new Response(null, { status: 204, headers: corsHeaders });
 }
 
+// --- PLAATS DIT BOVEN OF ONDER JE OPTIONS() FUNCTIE ---
+export async function GET() {
+    try {
+        const sheetRes = await fetch(SHEET_CSV_URL + `?t=${Date.now()}`);
+        const csvRaw = await sheetRes.text();
+        const hostelData = parseCSV(csvRaw);
+        return new Response(JSON.stringify(hostelData), { 
+            status: 200, 
+            headers: corsHeaders 
+        });
+    } catch (e) {
+        return new Response("Error", { status: 500, headers: corsHeaders });
+    }
+}
+
 function parseCSV(csvText: string) {
     if (!csvText || csvText.length < 10) return [];
     
