@@ -129,13 +129,7 @@ DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
 
 AUDIT REQUIREMENTS:
-For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
-- Price: user.maxPrice vs csv.pricing (Proximity check)
-- Sentiment: analysis of csv.overal_sentiment.score (Weight 1.0)
-- Noise: user.noiseLevel (1-100) vs csv.noise_level
-- Vibe: user.vibe vs csv.vibe_dna
-- Social: chat request vs csv.social_mechanism & pulse_summary & facilities
-- Proofs: Extract EXACT text from csv.facilities, csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
+For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns for scoring.
 - Images: Extract the EXACT URL from csv.hostel_img and place it in the hostel_img field.
 
 OUTPUT JSON STRUCTURE:
@@ -164,9 +158,14 @@ OUTPUT JSON STRUCTURE:
         });
 
         const aiData = await response.json();
-        const content = aiData.choices[0].message.content;
+        const content = JSON.parse(aiData.choices[0].message.content);
         
-        return new Response(content, {
+        // We sturen de rawDatabase mee terug zodat de frontend de details kan invullen
+        return new Response(JSON.stringify({
+            recommendations: content.recommendations || [],
+            message: content.message || "",
+            rawDatabase: pool 
+        }), {
             status: 200, headers: corsHeaders 
         });
 
