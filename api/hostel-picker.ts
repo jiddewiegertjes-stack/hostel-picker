@@ -73,84 +73,44 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
+                        content: `You are the Matchmaker Engine. Your ONLY job is to select the 3 best hostels and calculate their scores.
 
-Return EXACTLY 3 recommendations from the provided database that best fit the user context.
+Return EXACTLY 3 recommendations. DO NOT return raw data like facilities, nomad scores, images, or vibe_dna text. The frontend has the database.
 
 SCORING INDICES (Weights):
-Assign points using these specific multipliers:
-- Pricing: 1.0 (Target Proximity)
-- Overall Sentiment: 1.0 (Critical - based on csv.overal_sentiment.score)
-- Digital Nomad suitability: 0.9 (Very High)
-- Vibe Tags: 0.8 (High)
-- Solo Traveler suitability: 0.7 (High)
-- Noise Level: 0.3 (Low)
-- Rooms Info (Size/Type): 0.3 (Low)
-- Overall Age Match: 0.2 (Very Low)
-
-Tone of voice: You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
-
-SPECIAL PRICING LOGIC (Estimated Price):
-Treat context.maxPrice (€${context.maxPrice}) as an ESTIMATED IDEAL PRICE, not a hard maximum limit. 
-Do not filter hostels out for being over this price.
-- Pricing Score (Weight 1.0): Use bell-curve proximity logic. 
-- 100% Score: Actual price is within +/- 10% of €${context.maxPrice}.
-- Proximity: A hostel costing €42 is a BETTER match for a €40 estimate than a hostel costing €15 (potential quality mismatch) or €65 (too expensive).
-- Penalty: Deduct points gradually as the price moves further away (higher OR lower) from the estimate.
-
-NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
-1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user.
-2. DO NOT ASK for info already in USER CONTEXT.
-3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting or vague statement.
-4. SMART START: If the user says "show me the best spots" or similar, IMMEDIATELY perform the audit based on Profile Data.
-5. QUESTIONS: Focus only on "The Soul of the Trip" (specific social needs or work setup) not found in buttons.
-
-STRICT RULES:
-- RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
-- DATABASE PROOF: You MUST provide RAW DATA from the spreadsheet for nomad, solo, pulse, and sentiment proofs so the user can verify the data.
-- MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation.
-
-DATABASE: ${JSON.stringify(pool)}
-USER CONTEXT: ${JSON.stringify(context)}
-
-AUDIT REQUIREMENTS:
-For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns for scoring.
-- Images: Extract the EXACT URL from csv.hostel_img and place it in the hostel_img field.
+- Pricing: 1.0, Sentiment: 1.0, Nomad: 0.9, Vibe: 0.8, Solo: 0.7, Noise: 0.3, Rooms: 0.3, Age: 0.2.
 
 OUTPUT JSON STRUCTURE:
 {
   "recommendations": [
     {
-      "name": "hostel_name",
-      "location": "city",
+      "name": "hostel_name (MUST match the CSV exactly)",
       "matchPercentage": 0-100,
-      "price": "pricing",
-      "vibe": "vibe_dna",
-      "hostel_img": "EXACT URL FROM csv.hostel_img",
-      "alert": "red_flags or 'None'",
-      "audit_log": {
-        "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
-        "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
-        "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
-        "solo_proof": "RAW DATA FROM csv.solo_verdict",
-        "nomad_proof": "RAW DATA FROM csv.digital_nomad_score",
-        "vibe_logic": "Brief comparison of user.vibe vs csv.vibe_dna"
-      }
+      "reason": "1 short direct sentence why it matches.",
+      "score_breakdown": "P:X% + V:Y% + N:Z% = Total Match%"
     }
   ],
-  "message": "Strategic advice or clarifying questions."
-}`
+  "message": "Strategic advice (max 20 words)."
+}
+
+DATABASE: ${JSON.stringify(pool)}
+USER CONTEXT: ${JSON.stringify(context)}`
                     },
                     ...messages
                 ],
+                temperature: 0,
                 response_format: { type: "json_object" }
             }),
         });
 
         const aiData = await response.json();
-        const content = aiData.choices[0].message.content;
+        const aiContent = JSON.parse(aiData.choices[0].message.content);
         
-        return new Response(content, {
+        // We voegen de 'pool' (de database rijen) toe aan de response zodat de frontend de data kan koppelen.
+        return new Response(JSON.stringify({
+            ...aiContent,
+            rawDatabase: pool
+        }), {
             status: 200, headers: corsHeaders 
         });
 
