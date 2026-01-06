@@ -271,25 +271,25 @@ SCORING ALGORITHM (Weighted):
 ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo) have been PRE-CALCULATED in '_computed_scores'.
 Your job is to apply the weights and synthesize the final verdict based on these numbers.
 
-1. FACILITIES MATCH (Weight 1.5 - CRITICAL):
+1. FACILITIES MATCH (Weight 0.8 -):
    - Use '_computed_scores.facilities_match' (0-100).
    - This score represents strict matching of user requirements (e.g. "Work", "Kitchen", "Party") against available facilities.
 
-2. PRICE MATCH (Weight 1.0):
+2. PRICE MATCH (Weight 0.8):
    - Use '_computed_scores.price_match' (0-100).
 
 3. VIBE MATCH (Weight 1.2):
    - Use '_computed_scores.vibe_match' (0-100).
    - Based on semantic keyword mapping.
 
-4. NOISE MATCH (Weight 0.8):
+4. NOISE MATCH (Weight 0.5):
    - Use '_computed_scores.noise_match'.
    - This score already accounts for user preference (Score 100 = Perfect match for user's desired noise level).
 
-5. SENTIMENT (Weight 1.0):
+5. SENTIMENT (Weight 1.2):
    - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
-6. DIGITAL NOMAD & SOLO (Weight 0.9):
+6. DIGITAL NOMAD & SOLO (Weight 1.2):
    - Use '_computed_scores.nomad' and '_computed_scores.solo'.
 
 TONE OF VOICE:
