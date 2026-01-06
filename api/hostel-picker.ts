@@ -177,65 +177,6 @@ function enrichHostelData(hostel: any, userContext: any) {
         facilitiesMatch = Math.round((featuresFound / featuresLookedFor) * 100);
     }
 
-    // --- NIEUW: 7. AGE MATCH ---
-    let ageMatch = 50;
-    const userAge = parseInt(userContext?.age) || 25;
-    const hostelAvgAge = parseInt(hostel.overal_age) || 25; // Pakt '25' uit de CSV kolom
-    const ageDiff = Math.abs(userAge - hostelAvgAge);
-    // Score: 100 min 5 punten per jaar verschil. (Vb: User 25, Hostel 30 = 5 jaar diff = score 75)
-    ageMatch = Math.max(0, 100 - (ageDiff * 5));
-
-    // --- NIEUW: 8. SIZE MATCH ---
-    let sizeMatch = 50;
-    const userSize = (userContext?.size || "").toLowerCase(); // "small", "medium", "large"
-    const hostelSizeInfo = (hostel.rooms_info || "").toLowerCase();
-    
-    // Simpele woordmatch op de CSV tekst (bijv. "Medium, total capacity 30")
-    if (hostelSizeInfo.includes(userSize)) {
-        sizeMatch = 100;
-    } else if (
-        (userSize === "small" && hostelSizeInfo.includes("medium")) ||
-        (userSize === "large" && hostelSizeInfo.includes("medium"))
-    ) {
-        sizeMatch = 70; // Close enough
-    } else {
-        sizeMatch = 30; // Mismatch (bv Small vs Large)
-    }
-
-    // --- NIEUW: 9. NATIONALITY MATCH ---
-    let nationalityMatch = 0; // Default 0 (niet relevant als user niks invult)
-    const userNat = (userContext?.nationalityPref || "").trim();
-    
-    if (userNat.length > 0) {
-        try {
-            // CSV voorbeeld: {"USA":18,"Germany":8,"England":18}
-            // Backend moet dit parsen als het een string is, of direct gebruiken
-            let countryData = hostel.country_info;
-            if (typeof countryData === 'string') {
-                // Soms is JSON "dirty", probeer te fixen of parse direct
-                try { countryData = JSON.parse(countryData); } catch(e) {}
-            }
-            
-            // Zoek user input (bv "Dutch" of "Germany") in de keys
-            // We doen een "includes" check zodat "German" ook "Germany" matcht
-            const matchKey = Object.keys(countryData || {}).find(k => 
-                k.toLowerCase().includes(userNat.toLowerCase()) || 
-                userNat.toLowerCase().includes(k.toLowerCase())
-            );
-
-            if (matchKey) {
-                // Als nationaliteit gevonden is, score = 100
-                nationalityMatch = 100;
-            } else {
-                nationalityMatch = 20; // Niet gevonden
-            }
-        } catch (e) {
-            nationalityMatch = 50; // Fout in data, geef neutraal
-        }
-    } else {
-        nationalityMatch = 100; // Geen voorkeur? Dan is alles goed.
-    }
-
     // Voeg berekende scores toe aan het object (Original data stays available!)
     return {
         ...hostel,
@@ -245,11 +186,7 @@ function enrichHostelData(hostel: any, userContext: any) {
             noise_match: noiseMatchScore, // Veranderd naar 'match' score
             price_match: Math.round(priceScore),
             vibe_match: vibeMatch,
-            facilities_match: facilitiesMatch,
-            // Nieuwe scores toevoegen:
-            age_match: ageMatch,
-            size_match: sizeMatch,
-            nationality_match: nationalityMatch
+            facilities_match: facilitiesMatch
         }
     };
 }
@@ -317,6 +254,11 @@ export async function POST(req: Request) {
 
         const poolJsonChars = JSON.stringify(pool).length;
 
+        // --- NIEUWE LOGICA VOOR WEGING ---
+        // Vinkje aan = 1.5, Vinkje uit = 0.5
+        const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
+        const soloWeight = context?.soloMode ? "1.5" : "0.5";
+
         tOpenAIStart = Date.now();
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -331,7 +273,7 @@ export async function POST(req: Request) {
 Return EXACTLY 2 recommendations.
 
 SCORING ALGORITHM (Weighted):
-ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo, Age, Size, Nationality) have been PRE-CALCULATED in '_computed_scores'.
+ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo) have been PRE-CALCULATED in '_computed_scores'.
 Your job is to apply the weights and synthesize the final verdict based on these numbers.
 
 1. FACILITIES MATCH (Weight 0.8 -):
@@ -352,17 +294,11 @@ Your job is to apply the weights and synthesize the final verdict based on these
 5. SENTIMENT (Weight 1.2):
    - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
-6. DIGITAL NOMAD & SOLO (Weight 1.2):
-   - Use '_computed_scores.nomad' and '_computed_scores.solo'.
+6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
+   - Use '_computed_scores.nomad'.
 
-7. AGE MATCH (Weight 0.5):
-   - Use '_computed_scores.age_match'. 
-
-8. SIZE PREFERENCE (Weight 0.5):
-   - Use '_computed_scores.size_match'.
-
-9. NATIONALITY CONNECTION (Weight 0.5):
-   - Use '_computed_scores.nationality_match'.
+7. SOLO TRAVELER SCORE (Weight ${soloWeight}):
+   - Use '_computed_scores.solo'.
 
 TONE OF VOICE:
 You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
