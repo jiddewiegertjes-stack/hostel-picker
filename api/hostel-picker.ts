@@ -10,25 +10,19 @@ const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
-// MAPPING 1: FACILITIES (Vertaling van Frontend Intent naar Backend Keywords)
 const FEATURE_MAPPING: Record<string, string[]> = {
-    // Werk & Nomad
     "work": ["coworking", "desk", "wifi", "monitor", "digital nomad"],
     "digital nomad": ["coworking", "fast wifi", "desk", "workspace"],
-    // Sociaal & Party
     "party": ["bar", "nightclub", "events", "beer pong", "happy hour", "pub crawl"],
     "social": ["common room", "bar", "terrace", "games", "family dinner", "activities"],
-    // Gemak & Eten
     "kitchen": ["kitchen", "cooking", "stove", "microwave", "oven"],
     "food": ["restaurant", "cafe", "meals", "breakfast"],
     "pool": ["pool", "swimming", "jacuzzi"],
     "gym": ["gym", "fitness", "workout", "yoga"],
-    // Kamer & Privacy
     "privacy": ["curtain", "pod", "private"],
     "ac": ["air conditioning", "a/c", "fan", "climate control"]
 };
 
-// MAPPING 2: VIBE (Sfeer labels matching)
 const VIBE_MAPPING: Record<string, string[]> = {
     "party": ["party", "nightlife", "loud", "active", "social"],
     "chill": ["chill", "quiet", "relax", "nature", "hammock", "peaceful"],
@@ -80,11 +74,8 @@ function parseCSV(csvText: string) {
     }).filter(h => h.hostel_name && h.hostel_name.length > 1);
 }
 
-/** * NIEUW: Pre-calculation logic (Hybrid 3.0 - Full Normalization)
- * Voert harde berekeningen én mappings uit in TypeScript.
- */
 function enrichHostelData(hostel: any, userContext: any) {
-    // 1. Digital Nomad Score (Harde data uit JSON: Rank * 10)
+    // 1. Digital Nomad Score
     let nomadScore = 50; 
     try {
         if (hostel.digital_nomad_score) {
@@ -104,7 +95,7 @@ function enrichHostelData(hostel: any, userContext: any) {
         }
     } catch (e) { soloScore = 50; }
 
-    // 3. Price Score (Bell-Curve)
+    // 3. Price Score
     let priceScore = 0;
     const price = parseFloat(hostel.pricing);
     const target = parseFloat(userContext?.maxPrice) || 30;
@@ -115,9 +106,8 @@ function enrichHostelData(hostel: any, userContext: any) {
         priceScore = 50; 
     }
 
-    // 4. Noise Score (Genormaliseerd: Match tussen Backend Score en User Voorkeur)
-    // Stap A: Backend vertalen naar 0-100 schaal
-    let noiseLevelBackend = 50; // default medium
+    // 4. Noise Score
+    let noiseLevelBackend = 50; 
     // FIX: String() toegevoegd om crashes te voorkomen
     const noiseTxt = String(hostel.noise_level || "").toLowerCase();
     
@@ -125,13 +115,10 @@ function enrichHostelData(hostel: any, userContext: any) {
     else if (noiseTxt.includes("medium") || noiseTxt.includes("social")) noiseLevelBackend = 50;
     else if (noiseTxt.includes("quiet") || noiseTxt.includes("peace") || noiseTxt.includes("nature")) noiseLevelBackend = 15;
 
-    // Stap B: Matchen met User Input (slider 0-100)
-    // Als userContext.noiseLevel ontbreekt, aanname 50.
     const userNoisePref = userContext?.noiseLevel !== undefined ? parseInt(userContext.noiseLevel) : 50;
-    // Score is nabijheid (100 - verschil)
     const noiseMatchScore = Math.max(0, 100 - Math.abs(userNoisePref - noiseLevelBackend));
 
-    // 5. VIBE MATCH (Normalisatie via VIBE_MAPPING)
+    // 5. VIBE MATCH
     let vibeMatch = 50;
     // FIX: String() toegevoegd
     const userVibeInput = String(userContext?.vibe || "").toLowerCase();
@@ -152,16 +139,14 @@ function enrichHostelData(hostel: any, userContext: any) {
     
     if (vibeChecks > 0) {
         vibeMatch = Math.round((vibeHits / vibeChecks) * 100);
-        // Bonus: Directe woordmatch
         if (hostelVibeDna.includes(userVibeInput)) vibeMatch = 100;
     }
 
-    // 6. FACILITIES MATCH (Normalisatie via FEATURE_MAPPING)
+    // 6. FACILITIES MATCH
     let facilitiesMatch = 50;
     let featuresFound = 0;
     let featuresLookedFor = 0;
 
-    // Scan context (vibe + requirements) op keywords
     const combinedReqs = ((userContext?.vibe || "") + " " + (userContext?.requirements || "")).toLowerCase();
     // FIX: String() toegevoegd
     const hostelFacilities = String(hostel.facilities || "").toLowerCase();
@@ -180,16 +165,68 @@ function enrichHostelData(hostel: any, userContext: any) {
         facilitiesMatch = Math.round((featuresFound / featuresLookedFor) * 100);
     }
 
-    // Voeg berekende scores toe aan het object (Original data stays available!)
+    // 7. AGE MATCH
+    let ageMatch = 50;
+    const userAge = parseInt(userContext?.age) || 25;
+    const hostelAvgAge = parseInt(hostel.overal_age) || 25; 
+    const ageDiff = Math.abs(userAge - hostelAvgAge);
+    ageMatch = Math.max(0, 100 - (ageDiff * 5));
+
+    // 8. SIZE MATCH
+    let sizeMatch = 50;
+    const userSize = String(userContext?.size || "").toLowerCase(); 
+    // FIX: String() toegevoegd
+    const hostelSizeInfo = String(hostel.rooms_info || "").toLowerCase();
+    
+    if (hostelSizeInfo.includes(userSize)) {
+        sizeMatch = 100;
+    } else if (
+        (userSize === "small" && hostelSizeInfo.includes("medium")) ||
+        (userSize === "large" && hostelSizeInfo.includes("medium"))
+    ) {
+        sizeMatch = 70; 
+    } else {
+        sizeMatch = 30; 
+    }
+
+    // 9. NATIONALITY MATCH
+    let nationalityMatch = 0; 
+    const userNat = String(userContext?.nationalityPref || "").trim();
+    
+    if (userNat.length > 0) {
+        try {
+            let countryData = hostel.country_info;
+            if (typeof countryData === 'string') {
+                try { countryData = JSON.parse(countryData); } catch(e) {}
+            }
+            const matchKey = Object.keys(countryData || {}).find(k => 
+                k.toLowerCase().includes(userNat.toLowerCase()) || 
+                userNat.toLowerCase().includes(k.toLowerCase())
+            );
+            if (matchKey) {
+                nationalityMatch = 100;
+            } else {
+                nationalityMatch = 20;
+            }
+        } catch (e) {
+            nationalityMatch = 50; 
+        }
+    } else {
+        nationalityMatch = 100; 
+    }
+
     return {
         ...hostel,
         _computed_scores: {
             nomad: nomadScore,
             solo: soloScore,
-            noise_match: noiseMatchScore, // Veranderd naar 'match' score
+            noise_match: noiseMatchScore, 
             price_match: Math.round(priceScore),
             vibe_match: vibeMatch,
-            facilities_match: facilitiesMatch
+            facilities_match: facilitiesMatch,
+            age_match: ageMatch,
+            size_match: sizeMatch,
+            nationality_match: nationalityMatch
         }
     };
 }
@@ -250,10 +287,12 @@ export async function POST(req: Request) {
         
         let pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
         
-        // NIEUW: Verrijk de pool met harde berekeningen & Normalisaties
         pool = pool.map(h => enrichHostelData(h, context));
         
         tFilterEnd = Date.now();
+
+        const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
+        const soloWeight = context?.soloMode ? "1.5" : "0.5";
 
         const poolJsonChars = JSON.stringify(pool).length;
 
@@ -271,36 +310,53 @@ export async function POST(req: Request) {
 Return EXACTLY 2 recommendations.
 
 SCORING ALGORITHM (Weighted):
-ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo) have been PRE-CALCULATED in '_computed_scores'.
+ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo, Age, Size, Nationality) have been PRE-CALCULATED in '_computed_scores'.
 Your job is to apply the weights and synthesize the final verdict based on these numbers.
 
 1. FACILITIES MATCH (Weight 0.8 -):
    - Use '_computed_scores.facilities_match' (0-100).
-   - This score represents strict matching of user requirements (e.g. "Work", "Kitchen", "Party") against available facilities.
 
 2. PRICE MATCH (Weight 0.8):
    - Use '_computed_scores.price_match' (0-100).
 
 3. VIBE MATCH (Weight 1.2):
    - Use '_computed_scores.vibe_match' (0-100).
-   - Based on semantic keyword mapping.
 
 4. NOISE MATCH (Weight 0.5):
    - Use '_computed_scores.noise_match'.
-   - This score already accounts for user preference (Score 100 = Perfect match for user's desired noise level).
 
 5. SENTIMENT (Weight 1.2):
    - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
-6. DIGITAL NOMAD & SOLO (Weight 1.2):
-   - Use '_computed_scores.nomad' and '_computed_scores.solo'.
+6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
+   - Use '_computed_scores.nomad'.
+
+7. SOLO TRAVELER SCORE (Weight ${soloWeight}):
+   - Use '_computed_scores.solo'.
+
+8. AGE MATCH (Weight 0.5):
+   - Use '_computed_scores.age_match'. 
+
+9. SIZE PREFERENCE (Weight 0.5):
+   - Use '_computed_scores.size_match'.
+
+10. NATIONALITY CONNECTION (Weight 0.5):
+   - Use '_computed_scores.nationality_match'.
 
 TONE OF VOICE:
 You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
 
+INTERACTION STRATEGY (Smart Questions):
+1. ANALYZE the "messages" history.
+2. IF the user has NOT yet specified key preferences, AND the top 2 hostels are significantly different:
+   - Your "message" output MUST be a single, sharp, clarifying question.
+   - **CRITICAL:** If you ask a question, RETURN AN EMPTY ARRAY '[]' for recommendations.
+3. IF the user has already been specific:
+   - Use "message" to give a strategic tip.
+   - Return the 2 recommendations.
+
 AUDIT REQUIREMENTS:
 In 'audit_log', SHOW THE MATH using the pre-computed values.
-Example: "Facilities: (Pre-calc 100% * 1.5) + Vibe: (Pre-calc 80% * 1.2) ... = Total%"
 
 DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
@@ -316,7 +372,7 @@ OUTPUT JSON STRUCTURE:
       "vibe": "vibe_dna",
       "hostel_img": "EXACT URL FROM csv.hostel_img",
       "alert": "red_flags or 'None'",
-      "reason": "MANDATORY: A personalized verdict. Connect the user's specific inputs (Age, Nomad, Vibe) to the hostel's features. Start with 'Perfect for you because...' or similar.",
+      "reason": "MANDATORY: Act as a travel consultant. Don't just list matches; INTERPRET them. If ages match closely, say they'll fit in perfectly. If the price is lower than budget, call it a 'steal'. If they are solo, explain EXACTLY which feature (e.g., family dinners) solves their fear of being alone.",
       "audit_log": {
         "score_breakdown": "MUST show the calculation using labels.",
         "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
