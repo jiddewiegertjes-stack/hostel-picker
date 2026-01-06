@@ -10,19 +10,25 @@ const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
+// MAPPING 1: FACILITIES (Vertaling van Frontend Intent naar Backend Keywords)
 const FEATURE_MAPPING: Record<string, string[]> = {
+    // Werk & Nomad
     "work": ["coworking", "desk", "wifi", "monitor", "digital nomad"],
     "digital nomad": ["coworking", "fast wifi", "desk", "workspace"],
+    // Sociaal & Party
     "party": ["bar", "nightclub", "events", "beer pong", "happy hour", "pub crawl"],
     "social": ["common room", "bar", "terrace", "games", "family dinner", "activities"],
+    // Gemak & Eten
     "kitchen": ["kitchen", "cooking", "stove", "microwave", "oven"],
     "food": ["restaurant", "cafe", "meals", "breakfast"],
     "pool": ["pool", "swimming", "jacuzzi"],
     "gym": ["gym", "fitness", "workout", "yoga"],
+    // Kamer & Privacy
     "privacy": ["curtain", "pod", "private"],
     "ac": ["air conditioning", "a/c", "fan", "climate control"]
 };
 
+// MAPPING 2: VIBE (Sfeer labels matching)
 const VIBE_MAPPING: Record<string, string[]> = {
     "party": ["party", "nightlife", "loud", "active", "social"],
     "chill": ["chill", "quiet", "relax", "nature", "hammock", "peaceful"],
@@ -74,8 +80,11 @@ function parseCSV(csvText: string) {
     }).filter(h => h.hostel_name && h.hostel_name.length > 1);
 }
 
+/** * NIEUW: Pre-calculation logic (Hybrid 3.0 - Full Normalization)
+ * Voert harde berekeningen én mappings uit in TypeScript.
+ */
 function enrichHostelData(hostel: any, userContext: any) {
-    // 1. Digital Nomad Score
+    // 1. Digital Nomad Score (Harde data uit JSON: Rank * 10)
     let nomadScore = 50; 
     try {
         if (hostel.digital_nomad_score) {
@@ -95,7 +104,7 @@ function enrichHostelData(hostel: any, userContext: any) {
         }
     } catch (e) { soloScore = 50; }
 
-    // 3. Price Score
+    // 3. Price Score (Bell-Curve)
     let priceScore = 0;
     const price = parseFloat(hostel.pricing);
     const target = parseFloat(userContext?.maxPrice) || 30;
@@ -106,19 +115,23 @@ function enrichHostelData(hostel: any, userContext: any) {
         priceScore = 50; 
     }
 
-    // 4. Noise Score
-    let noiseLevelBackend = 50; 
-    // FIX: String() toegevoegd om crashes te voorkomen
+    // 4. Noise Score (Genormaliseerd: Match tussen Backend Score en User Voorkeur)
+    // Stap A: Backend vertalen naar 0-100 schaal
+    let noiseLevelBackend = 50; // default medium
+    // FIX: String() toegevoegd om crashes te voorkomen als data een getal is
     const noiseTxt = String(hostel.noise_level || "").toLowerCase();
     
     if (noiseTxt.includes("loud") || noiseTxt.includes("party") || noiseTxt.includes("music")) noiseLevelBackend = 90;
     else if (noiseTxt.includes("medium") || noiseTxt.includes("social")) noiseLevelBackend = 50;
     else if (noiseTxt.includes("quiet") || noiseTxt.includes("peace") || noiseTxt.includes("nature")) noiseLevelBackend = 15;
 
+    // Stap B: Matchen met User Input (slider 0-100)
+    // Als userContext.noiseLevel ontbreekt, aanname 50.
     const userNoisePref = userContext?.noiseLevel !== undefined ? parseInt(userContext.noiseLevel) : 50;
+    // Score is nabijheid (100 - verschil)
     const noiseMatchScore = Math.max(0, 100 - Math.abs(userNoisePref - noiseLevelBackend));
 
-    // 5. VIBE MATCH
+    // 5. VIBE MATCH (Normalisatie via VIBE_MAPPING)
     let vibeMatch = 50;
     // FIX: String() toegevoegd
     const userVibeInput = String(userContext?.vibe || "").toLowerCase();
@@ -139,14 +152,16 @@ function enrichHostelData(hostel: any, userContext: any) {
     
     if (vibeChecks > 0) {
         vibeMatch = Math.round((vibeHits / vibeChecks) * 100);
+        // Bonus: Directe woordmatch
         if (hostelVibeDna.includes(userVibeInput)) vibeMatch = 100;
     }
 
-    // 6. FACILITIES MATCH
+    // 6. FACILITIES MATCH (Normalisatie via FEATURE_MAPPING)
     let facilitiesMatch = 50;
     let featuresFound = 0;
     let featuresLookedFor = 0;
 
+    // Scan context (vibe + requirements) op keywords
     const combinedReqs = ((userContext?.vibe || "") + " " + (userContext?.requirements || "")).toLowerCase();
     // FIX: String() toegevoegd
     const hostelFacilities = String(hostel.facilities || "").toLowerCase();
@@ -165,65 +180,77 @@ function enrichHostelData(hostel: any, userContext: any) {
         facilitiesMatch = Math.round((featuresFound / featuresLookedFor) * 100);
     }
 
-    // 7. AGE MATCH
+    // --- NIEUW: 7. AGE MATCH ---
     let ageMatch = 50;
     const userAge = parseInt(userContext?.age) || 25;
-    const hostelAvgAge = parseInt(hostel.overal_age) || 25; 
+    const hostelAvgAge = parseInt(hostel.overal_age) || 25; // Pakt '25' uit de CSV kolom
     const ageDiff = Math.abs(userAge - hostelAvgAge);
+    // Score: 100 min 5 punten per jaar verschil. (Vb: User 25, Hostel 30 = 5 jaar diff = score 75)
     ageMatch = Math.max(0, 100 - (ageDiff * 5));
 
-    // 8. SIZE MATCH
+    // --- NIEUW: 8. SIZE MATCH ---
     let sizeMatch = 50;
-    const userSize = String(userContext?.size || "").toLowerCase(); 
-    // FIX: String() toegevoegd
+    const userSize = String(userContext?.size || "").toLowerCase(); // "small", "medium", "large"
+    
+    // FIX: String() toegevoegd om crashes te voorkomen
     const hostelSizeInfo = String(hostel.rooms_info || "").toLowerCase();
     
+    // Simpele woordmatch op de CSV tekst (bijv. "Medium, total capacity 30")
     if (hostelSizeInfo.includes(userSize)) {
         sizeMatch = 100;
     } else if (
         (userSize === "small" && hostelSizeInfo.includes("medium")) ||
         (userSize === "large" && hostelSizeInfo.includes("medium"))
     ) {
-        sizeMatch = 70; 
+        sizeMatch = 70; // Close enough
     } else {
-        sizeMatch = 30; 
+        sizeMatch = 30; // Mismatch (bv Small vs Large)
     }
 
-    // 9. NATIONALITY MATCH
-    let nationalityMatch = 0; 
+    // --- NIEUW: 9. NATIONALITY MATCH ---
+    let nationalityMatch = 0; // Default 0 (niet relevant als user niks invult)
     const userNat = String(userContext?.nationalityPref || "").trim();
     
     if (userNat.length > 0) {
         try {
+            // CSV voorbeeld: {"USA":18,"Germany":8,"England":18}
+            // Backend moet dit parsen als het een string is, of direct gebruiken
             let countryData = hostel.country_info;
             if (typeof countryData === 'string') {
+                // Soms is JSON "dirty", probeer te fixen of parse direct
                 try { countryData = JSON.parse(countryData); } catch(e) {}
             }
+            
+            // Zoek user input (bv "Dutch" of "Germany") in de keys
             const matchKey = Object.keys(countryData || {}).find(k => 
                 k.toLowerCase().includes(userNat.toLowerCase()) || 
                 userNat.toLowerCase().includes(k.toLowerCase())
             );
+
             if (matchKey) {
+                // Als nationaliteit gevonden is, score = 100
                 nationalityMatch = 100;
             } else {
-                nationalityMatch = 20;
+                nationalityMatch = 20; // Niet gevonden
             }
         } catch (e) {
-            nationalityMatch = 50; 
+            nationalityMatch = 50; // Fout in data, geef neutraal
         }
     } else {
-        nationalityMatch = 100; 
+        nationalityMatch = 100; // Geen voorkeur? Dan is alles goed.
     }
 
+    // Voeg berekende scores toe aan het object (Original data stays available!)
     return {
         ...hostel,
         _computed_scores: {
             nomad: nomadScore,
             solo: soloScore,
-            noise_match: noiseMatchScore, 
+            noise_match: noiseMatchScore, // Veranderd naar 'match' score
             price_match: Math.round(priceScore),
             vibe_match: vibeMatch,
             facilities_match: facilitiesMatch,
+            // Nieuwe scores toevoegen:
             age_match: ageMatch,
             size_match: sizeMatch,
             nationality_match: nationalityMatch
@@ -287,11 +314,18 @@ export async function POST(req: Request) {
         
         let pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
         
+        // NIEUW: Verrijk de pool met harde berekeningen & Normalisaties
         pool = pool.map(h => enrichHostelData(h, context));
         
         tFilterEnd = Date.now();
 
+        // ------------------------------------------------------------------
+        // DYNAMIC WEIGHTING LOGIC (NOMAD & SOLO)
+        // ------------------------------------------------------------------
+        // Als de user 'Nomad' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
+        
+        // Als de user 'Solo' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const soloWeight = context?.soloMode ? "1.5" : "0.5";
 
         const poolJsonChars = JSON.stringify(pool).length;
@@ -315,24 +349,29 @@ Your job is to apply the weights and synthesize the final verdict based on these
 
 1. FACILITIES MATCH (Weight 0.8 -):
    - Use '_computed_scores.facilities_match' (0-100).
+   - This score represents strict matching of user requirements (e.g. "Work", "Kitchen", "Party") against available facilities.
 
 2. PRICE MATCH (Weight 0.8):
    - Use '_computed_scores.price_match' (0-100).
 
 3. VIBE MATCH (Weight 1.2):
    - Use '_computed_scores.vibe_match' (0-100).
+   - Based on semantic keyword mapping.
 
 4. NOISE MATCH (Weight 0.5):
    - Use '_computed_scores.noise_match'.
+   - This score already accounts for user preference (Score 100 = Perfect match for user's desired noise level).
 
 5. SENTIMENT (Weight 1.2):
    - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
 6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
    - Use '_computed_scores.nomad'.
+   - *Logic:* If user is Nomad, this is critical. If not, ignore unless exceptional.
 
 7. SOLO TRAVELER SCORE (Weight ${soloWeight}):
    - Use '_computed_scores.solo'.
+   - *Logic:* If user is Solo, this is very important.
 
 8. AGE MATCH (Weight 0.5):
    - Use '_computed_scores.age_match'. 
@@ -348,15 +387,16 @@ You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
 
 INTERACTION STRATEGY (Smart Questions):
 1. ANALYZE the "messages" history.
-2. IF the user has NOT yet specified key preferences, AND the top 2 hostels are significantly different:
-   - Your "message" output MUST be a single, sharp, clarifying question.
-   - **CRITICAL:** If you ask a question, RETURN AN EMPTY ARRAY '[]' for recommendations.
+2. IF the user has NOT yet specified key preferences (like Party vs Chill, Surf vs Work, or specific amenities), AND the top 2 hostels are significantly different in character:
+   - Your "message" output MUST be a single, sharp, clarifying question to help narrow it down (e.g., "Do you prioritize a pool party or a quiet workspace?", "Are you looking to surf or hike?").
+   - **CRITICAL:** If you ask a question, RETURN AN EMPTY ARRAY '[]' for recommendations. Do NOT show recommendations yet.
 3. IF the user has already been specific:
-   - Use "message" to give a strategic tip.
+   - Set "message" to null. Do NOT provide conversational filler.
    - Return the 2 recommendations.
 
 AUDIT REQUIREMENTS:
 In 'audit_log', SHOW THE MATH using the pre-computed values.
+Example: "Facilities: (Pre-calc 100% * 1.5) + Vibe: (Pre-calc 80% * 1.2) ... = Total%"
 
 DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
