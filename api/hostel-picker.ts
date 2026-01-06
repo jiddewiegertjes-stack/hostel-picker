@@ -8,6 +8,35 @@ const corsHeaders = {
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
+// --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
+
+// MAPPING 1: FACILITIES (Vertaling van Frontend Intent naar Backend Keywords)
+const FEATURE_MAPPING: Record<string, string[]> = {
+    // Werk & Nomad
+    "work": ["coworking", "desk", "wifi", "monitor", "digital nomad"],
+    "digital nomad": ["coworking", "fast wifi", "desk", "workspace"],
+    // Sociaal & Party
+    "party": ["bar", "nightclub", "events", "beer pong", "happy hour", "pub crawl"],
+    "social": ["common room", "bar", "terrace", "games", "family dinner", "activities"],
+    // Gemak & Eten
+    "kitchen": ["kitchen", "cooking", "stove", "microwave", "oven"],
+    "food": ["restaurant", "cafe", "meals", "breakfast"],
+    "pool": ["pool", "swimming", "jacuzzi"],
+    "gym": ["gym", "fitness", "workout", "yoga"],
+    // Kamer & Privacy
+    "privacy": ["curtain", "pod", "private"],
+    "ac": ["air conditioning", "a/c", "fan", "climate control"]
+};
+
+// MAPPING 2: VIBE (Sfeer labels matching)
+const VIBE_MAPPING: Record<string, string[]> = {
+    "party": ["party", "nightlife", "loud", "active", "social"],
+    "chill": ["chill", "quiet", "relax", "nature", "hammock", "peaceful"],
+    "social": ["social", "community", "gathering", "family"],
+    "work": ["digital nomad", "focused", "quiet", "hub", "coworking"],
+    "nature": ["nature", "garden", "view", "eco", "jungle"]
+};
+
 /** ---- Simple in-memory cache (Edge warm instance) ---- */
 let cachedCsvRaw: string | null = null;
 let cachedHostelData: any[] | null = null;
@@ -51,6 +80,117 @@ function parseCSV(csvText: string) {
     }).filter(h => h.hostel_name && h.hostel_name.length > 1);
 }
 
+/** * NIEUW: Pre-calculation logic (Hybrid 3.0 - Full Normalization)
+ * Voert harde berekeningen én mappings uit in TypeScript.
+ */
+function enrichHostelData(hostel: any, userContext: any) {
+    // 1. Digital Nomad Score (Harde data uit JSON: Rank * 10)
+    let nomadScore = 50; 
+    try {
+        if (hostel.digital_nomad_score) {
+            const val = hostel.digital_nomad_score;
+            const json = typeof val === 'string' ? JSON.parse(val) : val;
+            nomadScore = (json.rank || 5) * 10;
+        }
+    } catch (e) { nomadScore = 50; }
+
+    // 2. Solo Traveler Score
+    let soloScore = 50;
+    try {
+        if (hostel.solo_verdict) {
+            const val = hostel.solo_verdict;
+            const json = typeof val === 'string' ? JSON.parse(val) : val;
+            soloScore = (json.rank || 5) * 10;
+        }
+    } catch (e) { soloScore = 50; }
+
+    // 3. Price Score (Bell-Curve)
+    let priceScore = 0;
+    const price = parseFloat(hostel.pricing);
+    const target = parseFloat(userContext?.maxPrice) || 30;
+    if (!isNaN(price)) {
+        const diff = Math.abs(price - target);
+        priceScore = Math.max(0, 100 - (diff * 2.5)); 
+    } else {
+        priceScore = 50; 
+    }
+
+    // 4. Noise Score (Genormaliseerd: Match tussen Backend Score en User Voorkeur)
+    // Stap A: Backend vertalen naar 0-100 schaal
+    let noiseLevelBackend = 50; // default medium
+    const noiseTxt = (hostel.noise_level || "").toLowerCase();
+    
+    if (noiseTxt.includes("loud") || noiseTxt.includes("party") || noiseTxt.includes("music")) noiseLevelBackend = 90;
+    else if (noiseTxt.includes("medium") || noiseTxt.includes("social")) noiseLevelBackend = 50;
+    else if (noiseTxt.includes("quiet") || noiseTxt.includes("peace") || noiseTxt.includes("nature")) noiseLevelBackend = 15;
+
+    // Stap B: Matchen met User Input (slider 0-100)
+    // Als userContext.noiseLevel ontbreekt, aanname 50.
+    const userNoisePref = userContext?.noiseLevel !== undefined ? parseInt(userContext.noiseLevel) : 50;
+    // Score is nabijheid (100 - verschil)
+    const noiseMatchScore = Math.max(0, 100 - Math.abs(userNoisePref - noiseLevelBackend));
+
+    // 5. VIBE MATCH (Normalisatie via VIBE_MAPPING)
+    let vibeMatch = 50;
+    const userVibeInput = (userContext?.vibe || "").toLowerCase();
+    const hostelVibeDna = (hostel.vibe_dna || "").toLowerCase();
+    
+    let vibeHits = 0;
+    let vibeChecks = 0;
+
+    Object.keys(VIBE_MAPPING).forEach(vibeKey => {
+        if (userVibeInput.includes(vibeKey)) {
+            vibeChecks++;
+            const keywords = VIBE_MAPPING[vibeKey];
+            if (keywords.some(k => hostelVibeDna.includes(k))) {
+                vibeHits++;
+            }
+        }
+    });
+    
+    if (vibeChecks > 0) {
+        vibeMatch = Math.round((vibeHits / vibeChecks) * 100);
+        // Bonus: Directe woordmatch
+        if (hostelVibeDna.includes(userVibeInput)) vibeMatch = 100;
+    }
+
+    // 6. FACILITIES MATCH (Normalisatie via FEATURE_MAPPING)
+    let facilitiesMatch = 50;
+    let featuresFound = 0;
+    let featuresLookedFor = 0;
+
+    // Scan context (vibe + requirements) op keywords
+    const combinedReqs = ((userContext?.vibe || "") + " " + (userContext?.requirements || "")).toLowerCase();
+    const hostelFacilities = (hostel.facilities || "").toLowerCase();
+
+    Object.keys(FEATURE_MAPPING).forEach(userKey => {
+        if (combinedReqs.includes(userKey)) {
+            featuresLookedFor++;
+            const backendKeywords = FEATURE_MAPPING[userKey];
+            if (backendKeywords.some(keyword => hostelFacilities.includes(keyword))) {
+                featuresFound++;
+            }
+        }
+    });
+
+    if (featuresLookedFor > 0) {
+        facilitiesMatch = Math.round((featuresFound / featuresLookedFor) * 100);
+    }
+
+    // Voeg berekende scores toe aan het object (Original data stays available!)
+    return {
+        ...hostel,
+        _computed_scores: {
+            nomad: nomadScore,
+            solo: soloScore,
+            noise_match: noiseMatchScore, // Veranderd naar 'match' score
+            price_match: Math.round(priceScore),
+            vibe_match: vibeMatch,
+            facilities_match: facilitiesMatch
+        }
+    };
+}
+
 export async function POST(req: Request) {
     const t0 = Date.now();
     let tSheetStart = 0, tSheetEnd = 0;
@@ -75,7 +215,6 @@ export async function POST(req: Request) {
             tParseStart = Date.now();
             tParseEnd = Date.now();
         } else {
-            // Punt 1: geen cacheBuster meer, zodat upstream caching kan werken
             const sheetRes = await fetch(SHEET_CSV_URL, {
                 cache: "force-cache",
                 headers: { "Cache-Control": "max-age=300" }
@@ -88,7 +227,6 @@ export async function POST(req: Request) {
             hostelData = parseCSV(csvRaw);
             tParseEnd = Date.now();
 
-            // Punt 2: cache parsed data in memory (warm edge instance)
             cachedCsvRaw = csvRaw;
             cachedHostelData = hostelData;
             cacheUpdatedAt = now;
@@ -107,7 +245,11 @@ export async function POST(req: Request) {
             return cityInSheet === userCity;
         });
         
-        const pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
+        let pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
+        
+        // NIEUW: Verrijk de pool met harde berekeningen & Normalisaties
+        pool = pool.map(h => enrichHostelData(h, context));
+        
         tFilterEnd = Date.now();
 
         const poolJsonChars = JSON.stringify(pool).length;
@@ -121,84 +263,70 @@ export async function POST(req: Request) {
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are the Expert Hostel Matchmaker. Calculate match percentages using a weighted scoring algorithm.
+                        content: `You are the Expert Hostel Matchmaker. 
 
-Return EXACTLY 2 recommendations from the provided database that best fit the user context."
+Return EXACTLY 2 recommendations.
 
-                        SCORING INDICES (Weights):
-                        Assign points using these specific multipliers:
-                        - Pricing: 1.0 (Target Proximity)
-                        - Overall Sentiment: 1.0 (Critical - based on csv.overal_sentiment.score)
-                        - Digital Nomad suitability: 0.9 (Very High)
-                        - Vibe Tags: 0.8 (High)
-                        - Solo Traveler suitability: 0.7 (High)
-                        - Noise Level: 0.3 (Low)
-                        - Rooms Info (Size/Type): 0.3 (Low)
-                        - Overall Age Match: 0.2 (Very Low)
+SCORING ALGORITHM (Weighted):
+ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo) have been PRE-CALCULATED in '_computed_scores'.
+Your job is to apply the weights and synthesize the final verdict based on these numbers.
 
-                        Tone of voice: You are the 'Straight-Talking Traveler'—giving honest, practical hostel advice based on hard data. Your tone is helpful, direct, and non-corporate.
+1. FACILITIES MATCH (Weight 1.5 - CRITICAL):
+   - Use '_computed_scores.facilities_match' (0-100).
+   - This score represents strict matching of user requirements (e.g. "Work", "Kitchen", "Party") against available facilities.
 
-                        SPECIAL PRICING LOGIC (Estimated Price):
-                        Treat context.maxPrice (€${context.maxPrice}) as an ESTIMATED IDEAL PRICE, not a hard maximum limit. 
-                        Do not filter hostels out for being over this price.
-                        - Pricing Score (Weight 1.0): Use bell-curve proximity logic. 
-                        - 100% Score: Actual price is within +/- 10% of €${context.maxPrice}.
-                        - Proximity: A hostel costing €42 is a BETTER match for a €40 estimate than a hostel costing €15 (potential quality mismatch) or €65 (too expensive).
-                        - Penalty: Deduct points gradually as the price moves further away (higher OR lower) from the estimate.
+2. PRICE MATCH (Weight 1.0):
+   - Use '_computed_scores.price_match' (0-100).
 
-                        NEW PROTOCOL: INSUFFICIENT INPUT & SMART AUDIT
-                        1. PROFILE DATA IS FINAL: Data in 'USER CONTEXT' (Price, Noise, Vibe, Destination, Age) is already provided by the user.
-                        2. DO NOT ASK for info already in USER CONTEXT.
-                        3. TRIGGER CRITERIA: Only return an empty [] recommendations array if the chat message is a simple greeting or vague statement.
-                        4. SMART START: If the user says "show me the best spots" or similar, IMMEDIATELY perform the audit based on Profile Data.
-                        5. QUESTIONS: Focus only on "The Soul of the Trip" (specific social needs or work setup) not found in buttons.
+3. VIBE MATCH (Weight 1.2):
+   - Use '_computed_scores.vibe_match' (0-100).
+   - Based on semantic keyword mapping.
 
-                        STRICT RULES:
-                        - RED FLAGS: Do NOT decrease the matchPercentage for red flags. Instead, list them strictly in the 'alert' field.
-                        - DATABASE PROOF: You must provide RAW DATA from the spreadsheet for nomad, solo, pulse, and sentiment proofs.
-                        - MATHEMATICAL AUDIT: In 'score_breakdown', you MUST show the step-by-step calculation: You MUST include ALL categories (Price, Sentiment, Nomad, Vibe, Solo, Noise, Rooms, Age) with their labels.
-                        Format example: "Price: (95% * 1.0) + Sentiment: (90% * 1.0) + Nomad: (70% * 0.9) + Vibe: (80% * 0.8) + Solo: (60% * 0.7) + Noise: (50% * 0.3) + Rooms: (40% * 0.3) + Age: (30% * 0.2) = Total Match%"
+4. NOISE MATCH (Weight 0.8):
+   - Use '_computed_scores.noise_match'.
+   - This score already accounts for user preference (Score 100 = Perfect match for user's desired noise level).
 
-                        DATABASE: ${JSON.stringify(pool)}
-                        USER CONTEXT: ${JSON.stringify(context)}
+5. SENTIMENT (Weight 1.0):
+   - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
-                        AUDIT REQUIREMENTS:
-                        For each hostel, compare the user's input (Profile + Chat) directly to the CSV columns:
-                        - Price: user.maxPrice vs csv.pricing (Proximity check)
-                        - Sentiment: analysis of csv.overal_sentiment.score (Weight 1.0)
-                        - Noise: user.noiseLevel (1-100) vs csv.noise_level
-                        - Vibe: user.vibe vs csv.vibe_dna
-                        - Social: chat request vs csv.social_mechanism & pulse_summary & facilities
-                        - Proofs: Extract EXACT text from csv.digital_nomad_score, csv.solo_verdict, csv.pulse_summary, and csv.overal_sentiment.
-                        - Images: Extract the EXACT URL from csv.hostel_img and place it in the hostel_img field.
+6. DIGITAL NOMAD & SOLO (Weight 0.9):
+   - Use '_computed_scores.nomad' and '_computed_scores.solo'.
 
-                        OUTPUT JSON STRUCTURE:
-                        {
-                          "recommendations": [
-                            {
-                              "name": "hostel_name",
-                              "location": "city",
-                              "matchPercentage": 0-100,
-                              "price": "pricing",
-                              "vibe": "vibe_dna",
-                              "hostel_img": "EXACT URL FROM csv.hostel_img",
-                              "alert": "red_flags or 'None'",
-                              "audit_log": {
-                                "score_breakdown": "MUST include all 8 categories with labels: Price: (X% * 1.0) + Sentiment: (Y% * 1.0) + Nomad: (Z% * 0.9) + Vibe: (A% * 0.8) + Solo: (B% * 0.7) + Noise: (C% * 0.3) + Rooms: (D% * 0.3) + Age: (E% * 0.2) = Total Match%",
-                                "sentiment_logic": "Weight 1.0: Analysis of overall sentiment score from csv.overal_sentiment.",
-                                "vibe_logic": "Weight 0.8: Match status of user vibe ${context.vibe} vs csv.vibe_dna.",
-                                "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
-                                "sentiment_proof": "RAW DATA FROM csv.overal_sentiment JSON",
-                                "nomad_proof": "Weight 0.9: data from csv.digital_nomad_score",
-                                "solo_proof": "Weight 0.7: data from csv.solo_verdict"
-                              }
-                            }
-                          ],
-                          "message": "Strategic advice or clarifying questions."
-                        }
+TONE OF VOICE:
+You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
 
-                        IMPORTANT FRONTEND RULE:
-                        Do NOT include these fields in the response audit_log (they are used for internal calculation only): price_logic, noise_logic, demographic_logic, facility_proof, trade_off_analysis.`
+AUDIT REQUIREMENTS:
+In 'audit_log', SHOW THE MATH using the pre-computed values.
+Example: "Facilities: (Pre-calc 100% * 1.5) + Vibe: (Pre-calc 80% * 1.2) ... = Total%"
+
+DATABASE: ${JSON.stringify(pool)}
+USER CONTEXT: ${JSON.stringify(context)}
+
+OUTPUT JSON STRUCTURE:
+{
+  "recommendations": [
+    {
+      "name": "hostel_name",
+      "location": "city",
+      "matchPercentage": 0-100,
+      "price": "pricing",
+      "vibe": "vibe_dna",
+      "hostel_img": "EXACT URL FROM csv.hostel_img",
+      "alert": "red_flags or 'None'",
+      "audit_log": {
+        "score_breakdown": "MUST show the calculation using labels.",
+        "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
+        "vibe_logic": "Explain vibe match based on pre-calc score.",
+        "sentiment_logic": "Analysis of csv.overal_sentiment.",
+        "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
+        "sentiment_proof": "RAW DATA FROM csv.overal_sentiment",
+        "nomad_proof": "Data from csv.digital_nomad_score",
+        "solo_proof": "Data from csv.solo_verdict"
+      }
+    }
+  ],
+  "message": "Strategic advice or clarifying questions."
+}`
                     },
                     ...messages
                 ],
