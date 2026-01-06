@@ -118,7 +118,7 @@ function enrichHostelData(hostel: any, userContext: any) {
     // 4. Noise Score (Genormaliseerd: Match tussen Backend Score en User Voorkeur)
     // Stap A: Backend vertalen naar 0-100 schaal
     let noiseLevelBackend = 50; // default medium
-    // FIX: String(...) toegevoegd om crashes te voorkomen als data een getal is
+    // FIX: String() toegevoegd om crashes te voorkomen
     const noiseTxt = String(hostel.noise_level || "").toLowerCase();
     
     if (noiseTxt.includes("loud") || noiseTxt.includes("party") || noiseTxt.includes("music")) noiseLevelBackend = 90;
@@ -133,7 +133,7 @@ function enrichHostelData(hostel: any, userContext: any) {
 
     // 5. VIBE MATCH (Normalisatie via VIBE_MAPPING)
     let vibeMatch = 50;
-    // FIX: String(...) toegevoegd
+    // FIX: String() toegevoegd
     const userVibeInput = String(userContext?.vibe || "").toLowerCase();
     const hostelVibeDna = String(hostel.vibe_dna || "").toLowerCase();
     
@@ -163,7 +163,7 @@ function enrichHostelData(hostel: any, userContext: any) {
 
     // Scan context (vibe + requirements) op keywords
     const combinedReqs = ((userContext?.vibe || "") + " " + (userContext?.requirements || "")).toLowerCase();
-    // FIX: String(...) toegevoegd
+    // FIX: String() toegevoegd
     const hostelFacilities = String(hostel.facilities || "").toLowerCase();
 
     Object.keys(FEATURE_MAPPING).forEach(userKey => {
@@ -255,15 +255,6 @@ export async function POST(req: Request) {
         
         tFilterEnd = Date.now();
 
-        // ------------------------------------------------------------------
-        // DYNAMIC WEIGHTING LOGIC (NOMAD & SOLO)
-        // ------------------------------------------------------------------
-        // Als de user 'Nomad' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
-        const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
-        
-        // Als de user 'Solo' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
-        const soloWeight = context?.soloMode ? "1.5" : "0.5";
-
         const poolJsonChars = JSON.stringify(pool).length;
 
         tOpenAIStart = Date.now();
@@ -301,25 +292,11 @@ Your job is to apply the weights and synthesize the final verdict based on these
 5. SENTIMENT (Weight 1.2):
    - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
-6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
-   - Use '_computed_scores.nomad'.
-   - *Logic:* If user is Nomad, this is critical. If not, ignore unless exceptional.
-
-7. SOLO TRAVELER SCORE (Weight ${soloWeight}):
-   - Use '_computed_scores.solo'.
-   - *Logic:* If user is Solo, this is very important.
+6. DIGITAL NOMAD & SOLO (Weight 1.2):
+   - Use '_computed_scores.nomad' and '_computed_scores.solo'.
 
 TONE OF VOICE:
 You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
-
-INTERACTION STRATEGY (Smart Questions):
-1. ANALYZE the "messages" history.
-2. IF the user has NOT yet specified key preferences (like Party vs Chill, Surf vs Work, or specific amenities), AND the top 2 hostels are significantly different in character:
-   - Your "message" output MUST be a single, sharp, clarifying question to help narrow it down (e.g., "Do you prioritize a pool party or a quiet workspace?", "Are you looking to surf or hike?").
-   - **CRITICAL:** If you ask a question, RETURN AN EMPTY ARRAY '[]' for recommendations. Do NOT show recommendations yet.
-3. IF the user has already been specific or the conversation history is rich:
-   - Use "message" to give a strategic tip or explain why the winner won (e.g., "Hostel A wins on Vibe, but B is cheaper").
-   - Return the 2 recommendations.
 
 AUDIT REQUIREMENTS:
 In 'audit_log', SHOW THE MATH using the pre-computed values.
@@ -339,6 +316,7 @@ OUTPUT JSON STRUCTURE:
       "vibe": "vibe_dna",
       "hostel_img": "EXACT URL FROM csv.hostel_img",
       "alert": "red_flags or 'None'",
+      "reason": "MANDATORY: A personalized verdict. Connect the user's specific inputs (Age, Nomad, Vibe) to the hostel's features. Start with 'Perfect for you because...' or similar.",
       "audit_log": {
         "score_breakdown": "MUST show the calculation using labels.",
         "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
