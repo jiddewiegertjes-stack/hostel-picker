@@ -177,6 +177,65 @@ function enrichHostelData(hostel: any, userContext: any) {
         facilitiesMatch = Math.round((featuresFound / featuresLookedFor) * 100);
     }
 
+    // --- NIEUW: 7. AGE MATCH ---
+    let ageMatch = 50;
+    const userAge = parseInt(userContext?.age) || 25;
+    const hostelAvgAge = parseInt(hostel.overal_age) || 25; // Pakt '25' uit de CSV kolom
+    const ageDiff = Math.abs(userAge - hostelAvgAge);
+    // Score: 100 min 5 punten per jaar verschil. (Vb: User 25, Hostel 30 = 5 jaar diff = score 75)
+    ageMatch = Math.max(0, 100 - (ageDiff * 5));
+
+    // --- NIEUW: 8. SIZE MATCH ---
+    let sizeMatch = 50;
+    const userSize = (userContext?.size || "").toLowerCase(); // "small", "medium", "large"
+    const hostelSizeInfo = (hostel.rooms_info || "").toLowerCase();
+    
+    // Simpele woordmatch op de CSV tekst (bijv. "Medium, total capacity 30")
+    if (hostelSizeInfo.includes(userSize)) {
+        sizeMatch = 100;
+    } else if (
+        (userSize === "small" && hostelSizeInfo.includes("medium")) ||
+        (userSize === "large" && hostelSizeInfo.includes("medium"))
+    ) {
+        sizeMatch = 70; // Close enough
+    } else {
+        sizeMatch = 30; // Mismatch (bv Small vs Large)
+    }
+
+    // --- NIEUW: 9. NATIONALITY MATCH ---
+    let nationalityMatch = 0; // Default 0 (niet relevant als user niks invult)
+    const userNat = (userContext?.nationalityPref || "").trim();
+    
+    if (userNat.length > 0) {
+        try {
+            // CSV voorbeeld: {"USA":18,"Germany":8,"England":18}
+            // Backend moet dit parsen als het een string is, of direct gebruiken
+            let countryData = hostel.country_info;
+            if (typeof countryData === 'string') {
+                // Soms is JSON "dirty", probeer te fixen of parse direct
+                try { countryData = JSON.parse(countryData); } catch(e) {}
+            }
+            
+            // Zoek user input (bv "Dutch" of "Germany") in de keys
+            // We doen een "includes" check zodat "German" ook "Germany" matcht
+            const matchKey = Object.keys(countryData || {}).find(k => 
+                k.toLowerCase().includes(userNat.toLowerCase()) || 
+                userNat.toLowerCase().includes(k.toLowerCase())
+            );
+
+            if (matchKey) {
+                // Als nationaliteit gevonden is, score = 100
+                nationalityMatch = 100;
+            } else {
+                nationalityMatch = 20; // Niet gevonden
+            }
+        } catch (e) {
+            nationalityMatch = 50; // Fout in data, geef neutraal
+        }
+    } else {
+        nationalityMatch = 100; // Geen voorkeur? Dan is alles goed.
+    }
+
     // Voeg berekende scores toe aan het object (Original data stays available!)
     return {
         ...hostel,
@@ -186,7 +245,11 @@ function enrichHostelData(hostel: any, userContext: any) {
             noise_match: noiseMatchScore, // Veranderd naar 'match' score
             price_match: Math.round(priceScore),
             vibe_match: vibeMatch,
-            facilities_match: facilitiesMatch
+            facilities_match: facilitiesMatch,
+            // Nieuwe scores toevoegen:
+            age_match: ageMatch,
+            size_match: sizeMatch,
+            nationality_match: nationalityMatch
         }
     };
 }
@@ -252,12 +315,16 @@ export async function POST(req: Request) {
         
         tFilterEnd = Date.now();
 
-        const poolJsonChars = JSON.stringify(pool).length;
-
-        // --- NIEUWE LOGICA VOOR WEGING ---
-        // Vinkje aan = 1.5, Vinkje uit = 0.5
+        // ------------------------------------------------------------------
+        // DYNAMIC WEIGHTING LOGIC (NOMAD & SOLO)
+        // ------------------------------------------------------------------
+        // Als de user 'Nomad' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
+        
+        // Als de user 'Solo' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const soloWeight = context?.soloMode ? "1.5" : "0.5";
+
+        const poolJsonChars = JSON.stringify(pool).length;
 
         tOpenAIStart = Date.now();
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -273,7 +340,7 @@ export async function POST(req: Request) {
 Return EXACTLY 2 recommendations.
 
 SCORING ALGORITHM (Weighted):
-ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo) have been PRE-CALCULATED in '_computed_scores'.
+ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo, Age, Size, Nationality) have been PRE-CALCULATED in '_computed_scores'.
 Your job is to apply the weights and synthesize the final verdict based on these numbers.
 
 1. FACILITIES MATCH (Weight 0.8 -):
@@ -296,12 +363,31 @@ Your job is to apply the weights and synthesize the final verdict based on these
 
 6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
    - Use '_computed_scores.nomad'.
+   - *Logic:* If user is Nomad, this is critical. If not, ignore unless exceptional.
 
 7. SOLO TRAVELER SCORE (Weight ${soloWeight}):
    - Use '_computed_scores.solo'.
+   - *Logic:* If user is Solo, this is very important.
+
+8. AGE MATCH (Weight 0.5):
+   - Use '_computed_scores.age_match'. 
+
+9. SIZE PREFERENCE (Weight 0.5):
+   - Use '_computed_scores.size_match'.
+
+10. NATIONALITY CONNECTION (Weight 0.5):
+   - Use '_computed_scores.nationality_match'.
 
 TONE OF VOICE:
 You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
+
+INTERACTION STRATEGY (Smart Questions):
+1. ANALYZE the "messages" history.
+2. IF the user has NOT yet specified key preferences (like Party vs Chill, Surf vs Work, or specific amenities), AND the top 2 hostels are significantly different in character:
+   - Your "message" output MUST be a single, sharp, clarifying question to help narrow it down (e.g., "Do you prioritize a pool party or a quiet workspace?", "Are you looking to surf or hike?").
+   - Still return the top 2 mathematical matches as "preliminary picks" in the JSON.
+3. IF the user has already been specific or the conversation history is rich:
+   - Use "message" to give a strategic tip or explain why the winner won (e.g., "Hostel A wins on Vibe, but B is cheaper").
 
 AUDIT REQUIREMENTS:
 In 'audit_log', SHOW THE MATH using the pre-computed values.
