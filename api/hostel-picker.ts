@@ -426,6 +426,8 @@ OUTPUT JSON STRUCTURE:
     }
   ],
   "message": "Strategic advice or clarifying questions."
+  "suggested_actions": ["Option A", "Option B"] 
+}
 }`
                     },
                     ...messages
