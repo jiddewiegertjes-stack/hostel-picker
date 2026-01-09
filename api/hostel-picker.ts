@@ -341,7 +341,7 @@ export async function POST(req: Request) {
                         role: "system", 
                         content: `You are the Expert Hostel Matchmaker. 
 
-Return EXACTLY 2 recommendations.
+Return EXACTLY 3 recommendations.
 
 SCORING ALGORITHM (Weighted):
 ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo, Age, Size, Nationality) have been PRE-CALCULATED in '_computed_scores'.
