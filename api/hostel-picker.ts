@@ -7,8 +7,6 @@ const corsHeaders = {
 };
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
-// NIEUW: URL voor de stedenlijst
-const LOCATIONS_CSV_URL = process.env.Countries_citys_csv_url || "";
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
@@ -43,73 +41,10 @@ const VIBE_MAPPING: Record<string, string[]> = {
 let cachedCsvRaw: string | null = null;
 let cachedHostelData: any[] | null = null;
 let cacheUpdatedAt = 0;
-// NIEUW: Cache voor de locaties
-let cachedLocations: any[] | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export async function OPTIONS() {
     return new Response(null, { status: 204, headers: corsHeaders });
-}
-
-// NIEUW: Simpele parser voor de locations CSV
-function parseLocationsCSV(csvText: string) {
-    if (!csvText) return [];
-    const lines = csvText.trim().split('\n');
-    // Verwijder quotes en witruimte van headers
-    const headers = lines[0].split(',').map(h => h.trim().replace(/['"]+/g, '')); 
-    
-    return lines.slice(1).map(line => {
-        // Simpele split (gaat ervan uit dat er geen komma's in de namen zelf staan)
-        const values = line.split(','); 
-        const entry: any = {};
-        headers.forEach((h, i) => {
-            // Maak schoon: verwijder quotes en witruimte
-            entry[h] = values[i] ? values[i].trim().replace(/^"|"$/g, '') : ""; 
-        });
-        return entry;
-    });
-}
-
-// NIEUW: GET Handler voor het ophalen van de stedenlijst
-export async function GET() {
-    // 1. Check cache
-    if (cachedLocations) {
-        return new Response(JSON.stringify(cachedLocations), { 
-            status: 200, 
-            headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-    }
-
-    try {
-        // 2. Fetch CSV
-        if (!LOCATIONS_CSV_URL) {
-             throw new Error("Locations URL not configured");
-        }
-
-        const response = await fetch(LOCATIONS_CSV_URL, {
-             cache: "force-cache",
-             headers: { "Cache-Control": "max-age=3600" } 
-        });
-
-        if (!response.ok) throw new Error("Failed to fetch locations");
-
-        const text = await response.text();
-        
-        // 3. Parse en Cache
-        const data = parseLocationsCSV(text);
-        cachedLocations = data;
-
-        return new Response(JSON.stringify(data), { 
-            status: 200, 
-            headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-
-    } catch (error) {
-        return new Response(JSON.stringify({ error: "Failed to load locations" }), { 
-            status: 500, 
-            headers: corsHeaders 
-        });
-    }
 }
 
 function parseCSV(csvText: string) {
