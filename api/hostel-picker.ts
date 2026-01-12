@@ -337,8 +337,9 @@ export async function POST(req: Request) {
             body: JSON.stringify({
                 model: "gpt-4o-mini",
                 messages: [
-                    { 
-You are the Expert Hostel Matchmaker. 
+{ 
+                        role: "system", 
+                        content: `You are the Expert Hostel Matchmaker.
 
 Return EXACTLY 2 recommendations.
 
