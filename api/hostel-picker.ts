@@ -363,10 +363,10 @@ Your job is to apply the weights and synthesize the final verdict based on these
    - Use '_computed_scores.facilities_match' (0-100).
    - This score represents strict matching of user requirements (e.g. "Work", "Kitchen", "Party") against available facilities.
 
-2. PRICE MATCH (Weight 0.8):
+2. PRICE MATCH (Weight 1.0):
    - Use '_computed_scores.price_match' (0-100).
 
-3. VIBE MATCH (Weight 1.2):
+3. VIBE MATCH (Weight 1.0):
    - Use '_computed_scores.vibe_match' (0-100).
    - Based on semantic keyword mapping.
 
@@ -374,7 +374,7 @@ Your job is to apply the weights and synthesize the final verdict based on these
    - Use '_computed_scores.noise_match'.
    - This score already accounts for user preference (Score 100 = Perfect match for user's desired noise level).
 
-5. SENTIMENT (Weight 1.2):
+5. SENTIMENT (Weight 0.7):
    - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
 
 6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
@@ -391,7 +391,7 @@ Your job is to apply the weights and synthesize the final verdict based on these
 9. SIZE PREFERENCE (Weight 0.5):
    - Use '_computed_scores.size_match'.
 
-10. NATIONALITY CONNECTION (Weight 0.5):
+10. NATIONALITY CONNECTION (Weight 0.1):
    - Use '_computed_scores.nationality_match'.
 
 TONE OF VOICE:
