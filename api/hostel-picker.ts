@@ -438,7 +438,7 @@ OUTPUT JSON STRUCTURE:
   ],
   "message": "Strategic advice or clarifying questions.",
   "suggestions": ["Option 1", "Option 2", "Option 3"]
-}
+}`
                     },
                     ...messages
                 ],
