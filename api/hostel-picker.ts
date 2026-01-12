@@ -430,10 +430,10 @@ OUTPUT JSON STRUCTURE:
         "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
         "vibe_logic": "Explain vibe match based on pre-calc score.",
         "sentiment_logic": "Analysis of csv.overal_sentiment.",
-        "pulse_summary_proof": "RAW DATA FROM csv.pulse_summary",
-        "sentiment_proof": "RAW DATA FROM csv.overal_sentiment",
-        "nomad_proof": "Data from csv.digital_nomad_score",
-        "solo_proof": "Data from csv.solo_verdict"
+"pulse_summary_proof": "EXTRACT THE EXACT TEXT VALUE from the 'pulse_summary' field in the database. Do NOT write 'RAW DATA'.", // AANGEPAST
+        "sentiment_proof": "EXTRACT THE EXACT TEXT VALUE from the 'overal_sentiment' field in the database. Do NOT write 'RAW DATA'.", // AANGEPAST
+        "nomad_proof": "EXTRACT THE EXACT TEXT VALUE from the 'digital_nomad_score' field in the database.", // AANGEPAST
+        "solo_proof": "EXTRACT THE EXACT TEXT VALUE from the 'solo_verdict' field in the database." // AANGEPAST
       }
     }
   ],
