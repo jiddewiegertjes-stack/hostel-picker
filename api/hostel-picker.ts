@@ -1,10 +1,29 @@
 export const runtime = "edge";
 
-const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-};
+// --- 🔒 SECURITY CONFIGURATIE (CORS) ---
+const ALLOWED_ORIGINS = [
+    "https://hostel-picker.vercel.app", // Jouw productie URL
+    "http://localhost:3000",            // Jouw lokale test omgeving
+];
+
+function getCorsHeaders(request: Request) {
+    const origin = request.headers.get("origin") || "";
+    
+    // Check of de origin op de VIP lijst staat
+    if (ALLOWED_ORIGINS.includes(origin)) {
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+        };
+    }
+
+    // Geen toegang? Dan sturen we headers zonder Allow-Origin
+    return {
+        "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    };
+}
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
@@ -43,8 +62,12 @@ let cachedHostelData: any[] | null = null;
 let cacheUpdatedAt = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function OPTIONS() {
-    return new Response(null, { status: 204, headers: corsHeaders });
+// --- AANGEPASTE OPTIONS HANDLER ---
+export async function OPTIONS(request: Request) {
+    return new Response(null, { 
+        status: 204, 
+        headers: getCorsHeaders(request) 
+    });
 }
 
 function parseCSV(csvText: string) {
@@ -258,8 +281,13 @@ function enrichHostelData(hostel: any, userContext: any) {
     };
 }
 
+// --- AANGEPASTE POST HANDLER MET SECURITY CHECK ---
 export async function POST(req: Request) {
     const t0 = Date.now();
+    
+    // 1. HAAL DE VEILIGE HEADERS OP
+    const safeHeaders = getCorsHeaders(req);
+
     let tSheetStart = 0, tSheetEnd = 0;
     let tParseStart = 0, tParseEnd = 0;
     let tReqJsonStart = 0, tReqJsonEnd = 0;
@@ -306,16 +334,16 @@ export async function POST(req: Request) {
         const { messages, context } = body;
 
         // --- BEVEILIGING TEGEN MISBRUIK ---
-    // Check of de laatste input niet belachelijk lang is (max 600 tekens).
-    // Dit voorkomt dat je onnodig veel tokens verbruikt.
-    const lastMsg = messages?.[messages.length - 1];
-    if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
-        return new Response(JSON.stringify({ 
-            message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
-            recommendations: [] 
-        }), { status: 400, headers: corsHeaders });
-    }
-    // ----------------------------------
+        // Check of de laatste input niet belachelijk lang is (max 600 tekens).
+        const lastMsg = messages?.[messages.length - 1];
+        if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
+            // GEBRUIK safeHeaders IN ERROR RESPONSE
+            return new Response(JSON.stringify({ 
+                message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
+                recommendations: [] 
+            }), { status: 400, headers: safeHeaders });
+        }
+        // ----------------------------------
 
         tFilterStart = Date.now();
         const userCity = (context?.destination || "").toLowerCase().trim();
@@ -334,10 +362,7 @@ export async function POST(req: Request) {
         // ------------------------------------------------------------------
         // DYNAMIC WEIGHTING LOGIC (NOMAD & SOLO)
         // ------------------------------------------------------------------
-        // Als de user 'Nomad' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
-        
-        // Als de user 'Solo' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const soloWeight = context?.soloMode ? "1.5" : "0.5";
 
         const poolJsonChars = JSON.stringify(pool).length;
@@ -474,8 +499,9 @@ OUTPUT JSON STRUCTURE:
             pool_json_chars: poolJsonChars
         }));
         
+        // GEBRUIK safeHeaders IN SUCCESS RESPONSE
         return new Response(content, {
-            status: 200, headers: corsHeaders 
+            status: 200, headers: safeHeaders 
         });
 
     } catch (error: any) {
@@ -487,6 +513,7 @@ OUTPUT JSON STRUCTURE:
             ms_filter_and_pool: tFilterEnd && tFilterStart ? (tFilterEnd - tFilterStart) : null,
             ms_openai_fetch_and_json: tOpenAIEnd && tOpenAIStart ? (tOpenAIEnd - tOpenAIStart) : null
         }));
-        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
+        // GEBRUIK safeHeaders IN ERROR RESPONSE
+        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: safeHeaders });
     }
 }
