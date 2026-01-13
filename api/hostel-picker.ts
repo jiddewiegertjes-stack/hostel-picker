@@ -1,7 +1,7 @@
 export const runtime = "edge";
 
 const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": "https://hostel-picker.vercel.app", // Geen slash!
     "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
 };
