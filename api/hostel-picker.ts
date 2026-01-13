@@ -1,4 +1,6 @@
-export const runtime = "edge";
+export const runtime = "nodejs"; 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -37,7 +39,7 @@ const VIBE_MAPPING: Record<string, string[]> = {
     "nature": ["nature", "garden", "view", "eco", "jungle"]
 };
 
-/** ---- Simple in-memory cache (Edge warm instance) ---- */
+/** ---- Simple in-memory cache ---- */
 let cachedCsvRaw: string | null = null;
 let cachedHostelData: any[] | null = null;
 let cacheUpdatedAt = 0;
@@ -264,7 +266,7 @@ export async function POST(req: Request) {
     let tParseStart = 0, tParseEnd = 0;
     let tReqJsonStart = 0, tReqJsonEnd = 0;
     let tFilterStart = 0, tFilterEnd = 0;
-    let tOpenAIStart = 0, tOpenAIEnd = 0;
+    let tOpenAIStart = 0;
 
     try {
         const apiKey = process.env.OPENAI_API_KEY;
@@ -306,16 +308,15 @@ export async function POST(req: Request) {
         const { messages, context } = body;
 
         // --- BEVEILIGING TEGEN MISBRUIK ---
-    // Check of de laatste input niet belachelijk lang is (max 600 tekens).
-    // Dit voorkomt dat je onnodig veel tokens verbruikt.
-    const lastMsg = messages?.[messages.length - 1];
-    if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
-        return new Response(JSON.stringify({ 
-            message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
-            recommendations: [] 
-        }), { status: 400, headers: corsHeaders });
-    }
-    // ----------------------------------
+        // Check of de laatste input niet belachelijk lang is (max 600 tekens).
+        const lastMsg = messages?.[messages.length - 1];
+        if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
+            return new Response(JSON.stringify({ 
+                message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
+                recommendations: [] 
+            }), { status: 400, headers: corsHeaders });
+        }
+        // ----------------------------------
 
         tFilterStart = Date.now();
         const userCity = (context?.destination || "").toLowerCase().trim();
@@ -326,7 +327,7 @@ export async function POST(req: Request) {
         
         let pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
         
-        // NIEUW: Verrijk de pool met harde berekeningen & Normalisaties
+        // Verrijk de pool met harde berekeningen & Normalisaties
         pool = pool.map(h => enrichHostelData(h, context));
         
         tFilterEnd = Date.now();
@@ -334,22 +335,23 @@ export async function POST(req: Request) {
         // ------------------------------------------------------------------
         // DYNAMIC WEIGHTING LOGIC (NOMAD & SOLO)
         // ------------------------------------------------------------------
-        // Als de user 'Nomad' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
-        
-        // Als de user 'Solo' aanvinkt, weegt het zwaar (1.5). Anders minder (0.5).
         const soloWeight = context?.soloMode ? "1.5" : "0.5";
 
-        const poolJsonChars = JSON.stringify(pool).length;
-
         tOpenAIStart = Date.now();
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+
+        // STREAMING REQUEST NAAR OPENAI
+        const openAIResponse = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            headers: { 
+                "Content-Type": "application/json", 
+                Authorization: `Bearer ${apiKey}` 
+            },
             body: JSON.stringify({
                 model: "gpt-4o-mini",
+                stream: true, // <--- BELANGRIJK: STREAMING AAN
                 messages: [
-{ 
+                { 
                         role: "system", 
                         content: `You are the Expert Hostel Matchmaker.
 
@@ -442,10 +444,10 @@ OUTPUT JSON STRUCTURE:
         "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
         "vibe_logic": "Explain vibe match based on pre-calc score.",
         "sentiment_logic": "Analysis of csv.overal_sentiment.",
-"pulse_summary_proof": "EXTRACT THE EXACT TEXT VALUE from the 'pulse_summary' field in the database. Do NOT write 'RAW DATA'.", // AANGEPAST
-        "sentiment_proof": "EXTRACT THE EXACT TEXT VALUE from the 'overal_sentiment' field in the database. Do NOT write 'RAW DATA'.", // AANGEPAST
-        "nomad_proof": "EXTRACT THE EXACT TEXT VALUE from the 'digital_nomad_score' field in the database.", // AANGEPAST
-        "solo_proof": "EXTRACT THE EXACT TEXT VALUE from the 'solo_verdict' field in the database." // AANGEPAST
+"pulse_summary_proof": "EXTRACT THE EXACT TEXT VALUE from the 'pulse_summary' field in the database. Do NOT write 'RAW DATA'.", 
+        "sentiment_proof": "EXTRACT THE EXACT TEXT VALUE from the 'overal_sentiment' field in the database. Do NOT write 'RAW DATA'.", 
+        "nomad_proof": "EXTRACT THE EXACT TEXT VALUE from the 'digital_nomad_score' field in the database.", 
+        "solo_proof": "EXTRACT THE EXACT TEXT VALUE from the 'solo_verdict' field in the database." 
       }
     }
   ],
@@ -458,35 +460,54 @@ OUTPUT JSON STRUCTURE:
                 response_format: { type: "json_object" }
             }),
         });
-        tOpenAIEnd = Date.now();
 
-        const aiData = await response.json();
-        const content = aiData.choices[0].message.content;
+        // STREAM HANDLER:
+        // We sluizen de stream van OpenAI direct door naar de frontend.
+        // Hierdoor ziet Vercel activiteit en sluit hij de verbinding niet.
+        const stream = new ReadableStream({
+            async start(controller) {
+                const reader = openAIResponse.body?.getReader();
+                const decoder = new TextDecoder();
+                const encoder = new TextEncoder();
 
-        console.log(JSON.stringify({
-            ms_total: Date.now() - t0,
-            ms_sheet_fetch_and_text: tSheetEnd - tSheetStart,
-            ms_csv_parse: tParseEnd - tParseStart,
-            ms_req_json: tReqJsonEnd - tReqJsonStart,
-            ms_filter_and_pool: tFilterEnd - tFilterStart,
-            ms_openai_fetch_and_json: tOpenAIEnd - tOpenAIStart,
-            pool_count: pool.length,
-            pool_json_chars: poolJsonChars
-        }));
-        
-        return new Response(content, {
-            status: 200, headers: corsHeaders 
+                if (!reader) {
+                    controller.close();
+                    return;
+                }
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunkText = decoder.decode(value, { stream: true });
+                        const lines = chunkText.split('\n').filter(l => l.trim() !== '');
+
+                        for (const line of lines) {
+                            if (line.includes('[DONE]')) continue;
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const json = JSON.parse(line.replace('data: ', ''));
+                                    const content = json.choices[0]?.delta?.content || "";
+                                    if (content) {
+                                        // We sturen alleen het tekstdeel door
+                                        controller.enqueue(encoder.encode(content));
+                                    }
+                                } catch (e) { /* negeer incomplete chunks */ }
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Stream error", err);
+                } finally {
+                    controller.close();
+                }
+            }
         });
 
+        return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
     } catch (error: any) {
-        console.log(JSON.stringify({
-            ms_total: Date.now() - t0,
-            ms_sheet_fetch_and_text: tSheetEnd && tSheetStart ? (tSheetEnd - tSheetStart) : null,
-            ms_csv_parse: tParseEnd && tParseStart ? (tParseEnd - tParseStart) : null,
-            ms_req_json: tReqJsonEnd && tReqJsonStart ? (tReqJsonEnd - tReqJsonStart) : null,
-            ms_filter_and_pool: tFilterEnd && tFilterStart ? (tFilterEnd - tFilterStart) : null,
-            ms_openai_fetch_and_json: tOpenAIEnd && tOpenAIStart ? (tOpenAIEnd - tOpenAIStart) : null
-        }));
         return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
     }
 }
