@@ -2,24 +2,25 @@ export const runtime = "edge";
 
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
 
-// --- STAP 0: DYNAMISCHE CORS BEVEILIGING (PATCH) ---
-// We staan alleen deze specifieke adressen toe.
+// --- STAP 0: SLIMME CORS BEVEILIGING (PATCH V2) ---
+// We maken de poortwachter iets slimmer voor Vercel Previews
 const allowedOrigins = [
-  "https://hostel-picker.vercel.app",      // Je live site
-  "https://www.hostel-picker.vercel.app",  // De www versie
-  "http://localhost:3000"                  // Jij lokaal (voor testen)
+  "http://localhost:3000" // Jij lokaal
 ];
 
-// Helper functie: Geef de juiste header terug op basis van wie er aanklopt
+// Helper functie: Geef de juiste header terug
 function getCorsHeaders(origin: string | null) {
-    // Als de bezoeker op de gastenlijst staat, geven we zijn origin terug.
-    // Zo niet? Dan geven we de productie URL terug (wat effectief blokkeert).
-    const allowOrigin = allowedOrigins.includes(origin || "") 
-        ? origin 
-        : allowedOrigins[0];
+    const incomingOrigin = origin || "";
+    
+    // MAG DEZE BEZOEKER ERIN?
+    // 1. Staat hij letterlijk in de lijst (localhost)?
+    // 2. OF: Is het jouw Vercel app (bevat 'hostel-picker' en eindigt op 'vercel.app')?
+    const isAllowed = 
+        allowedOrigins.includes(incomingOrigin) ||
+        (incomingOrigin.includes("hostel-picker") && incomingOrigin.endsWith(".vercel.app"));
 
     return {
-        "Access-Control-Allow-Origin": allowOrigin || "",
+        "Access-Control-Allow-Origin": isAllowed ? incomingOrigin : allowedOrigins[0],
         "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
         "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
     };
