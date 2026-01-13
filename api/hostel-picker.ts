@@ -1,16 +1,22 @@
 export const runtime = "edge";
 
-// --- 🔒 SECURITY CONFIGURATIE (CORS) ---
+// --- 🔒 SECURITY CONFIGURATIE (VIP LIJST) ---
 const ALLOWED_ORIGINS = [
     "https://hostel-picker.vercel.app", // Jouw productie URL
-    "http://localhost:3000",            // Jouw lokale test omgeving
+    "http://localhost:3000",            // Lokaal testen
 ];
 
 function getCorsHeaders(request: Request) {
     const origin = request.headers.get("origin") || "";
     
-    // Check of de origin op de VIP lijst staat
-    if (ALLOWED_ORIGINS.includes(origin)) {
+    // CHECK 1: Staat hij hard op de lijst? (Productie & Localhost)
+    const isWhitelisted = ALLOWED_ORIGINS.includes(origin);
+
+    // CHECK 2: Is het een Vercel Preview URL? (Eindigt op .vercel.app)
+    // Dit zorgt dat al je test-omgevingen ook werken.
+    const isVercelPreview = origin.endsWith(".vercel.app");
+
+    if (isWhitelisted || isVercelPreview) {
         return {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
