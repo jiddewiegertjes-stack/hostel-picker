@@ -1,24 +1,12 @@
 export const runtime = "edge";
 
+const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+};
+
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
-
-// --- BEVEILIGING: CORS CONFIGURATIE ---
-// Voeg hier je productie domein toe en localhost voor testen
-const ALLOWED_ORIGINS = [
-    "https://hostel-picker.vercel.app", // Jouw live domein
-    "http://localhost:3000"             // Lokaal testen
-];
-
-function getCorsHeaders(request: Request) {
-    const origin = request.headers.get("origin") || "";
-    const isAllowed = ALLOWED_ORIGINS.includes(origin);
-
-    return {
-        "Access-Control-Allow-Origin": isAllowed ? origin : "null",
-        "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-    };
-}
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
@@ -55,8 +43,8 @@ let cachedHostelData: any[] | null = null;
 let cacheUpdatedAt = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function OPTIONS(req: Request) {
-    return new Response(null, { status: 204, headers: getCorsHeaders(req) });
+export async function OPTIONS() {
+    return new Response(null, { status: 204, headers: corsHeaders });
 }
 
 function parseCSV(csvText: string) {
@@ -272,30 +260,6 @@ function enrichHostelData(hostel: any, userContext: any) {
 
 export async function POST(req: Request) {
     const t0 = Date.now();
-    
-    // Bepaal headers dynamisch (CORS fix)
-    const headers = getCorsHeaders(req);
-
-    let body;
-    try {
-        body = await req.json();
-    } catch (e) {
-        return new Response(JSON.stringify({ message: "Invalid JSON" }), { status: 400, headers });
-    }
-
-    const { messages, context } = body;
-
-    // --- BEVEILIGING: INPUT VALIDATIE ---
-    // Check of het laatste bericht niet te lang is om abuse/kosten te voorkomen
-    const lastMsg = messages?.[messages.length - 1];
-    if (lastMsg && lastMsg.content && lastMsg.content.length > 500) {
-        return new Response(JSON.stringify({ 
-            message: "Whoa, that's a long message! Please keep it under 500 characters so I can process it quickly.", 
-            recommendations: [] 
-        }), { status: 400, headers });
-    }
-    // ------------------------------------
-
     let tSheetStart = 0, tSheetEnd = 0;
     let tParseStart = 0, tParseEnd = 0;
     let tReqJsonStart = 0, tReqJsonEnd = 0;
@@ -335,7 +299,11 @@ export async function POST(req: Request) {
             cacheUpdatedAt = now;
         }
 
-        tReqJsonEnd = Date.now(); // Was al geparsed bovenin voor validatie
+        tReqJsonStart = Date.now();
+        const body = await req.json();
+        tReqJsonEnd = Date.now();
+
+        const { messages, context } = body;
 
         tFilterStart = Date.now();
         const userCity = (context?.destination || "").toLowerCase().trim();
@@ -494,9 +462,8 @@ OUTPUT JSON STRUCTURE:
             pool_json_chars: poolJsonChars
         }));
         
-        // Gebruik de dynamische headers
         return new Response(content, {
-            status: 200, headers: headers 
+            status: 200, headers: corsHeaders 
         });
 
     } catch (error: any) {
@@ -508,7 +475,6 @@ OUTPUT JSON STRUCTURE:
             ms_filter_and_pool: tFilterEnd && tFilterStart ? (tFilterEnd - tFilterStart) : null,
             ms_openai_fetch_and_json: tOpenAIEnd && tOpenAIStart ? (tOpenAIEnd - tOpenAIStart) : null
         }));
-        // Gebruik de dynamische headers ook bij errors
-        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: headers });
+        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
     }
 }
