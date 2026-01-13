@@ -305,6 +305,18 @@ export async function POST(req: Request) {
 
         const { messages, context } = body;
 
+        // --- BEVEILIGING TEGEN MISBRUIK ---
+    // Check of de laatste input niet belachelijk lang is (max 600 tekens).
+    // Dit voorkomt dat je onnodig veel tokens verbruikt.
+    const lastMsg = messages?.[messages.length - 1];
+    if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
+        return new Response(JSON.stringify({ 
+            message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
+            recommendations: [] 
+        }), { status: 400, headers: corsHeaders });
+    }
+    // ----------------------------------
+
         tFilterStart = Date.now();
         const userCity = (context?.destination || "").toLowerCase().trim();
         const finalData = hostelData.filter(h => {
