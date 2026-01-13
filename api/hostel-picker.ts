@@ -1,12 +1,29 @@
 export const runtime = "edge";
 
-const corsHeaders = {
-    "Access-Control-Allow-Origin": "https://hostel-picker.vercel.app", // Geen slash!
-    "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-};
-
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
+
+// --- STAP 0: DYNAMISCHE CORS BEVEILIGING (PATCH) ---
+// We staan alleen deze specifieke adressen toe.
+const allowedOrigins = [
+  "https://hostel-picker.vercel.app",      // Je live site
+  "https://www.hostel-picker.vercel.app",  // De www versie
+  "http://localhost:3000"                  // Jij lokaal (voor testen)
+];
+
+// Helper functie: Geef de juiste header terug op basis van wie er aanklopt
+function getCorsHeaders(origin: string | null) {
+    // Als de bezoeker op de gastenlijst staat, geven we zijn origin terug.
+    // Zo niet? Dan geven we de productie URL terug (wat effectief blokkeert).
+    const allowOrigin = allowedOrigins.includes(origin || "") 
+        ? origin 
+        : allowedOrigins[0];
+
+    return {
+        "Access-Control-Allow-Origin": allowOrigin || "",
+        "Access-Control-Allow-Methods": "GET, OPTIONS, POST",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    };
+}
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
@@ -43,8 +60,10 @@ let cachedHostelData: any[] | null = null;
 let cacheUpdatedAt = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function OPTIONS() {
-    return new Response(null, { status: 204, headers: corsHeaders });
+// OPTIONS: Dit handelt de "Pre-flight" check van de browser af
+export async function OPTIONS(req: Request) {
+    const origin = req.headers.get("origin");
+    return new Response(null, { status: 204, headers: getCorsHeaders(origin) });
 }
 
 function parseCSV(csvText: string) {
@@ -266,6 +285,10 @@ export async function POST(req: Request) {
     let tFilterStart = 0, tFilterEnd = 0;
     let tOpenAIStart = 0, tOpenAIEnd = 0;
 
+    // --- PATCH: Bepaal dynamisch de headers ---
+    const origin = req.headers.get("origin");
+    const headers = getCorsHeaders(origin);
+
     try {
         const apiKey = process.env.OPENAI_API_KEY;
 
@@ -306,16 +329,16 @@ export async function POST(req: Request) {
         const { messages, context } = body;
 
         // --- BEVEILIGING TEGEN MISBRUIK ---
-    // Check of de laatste input niet belachelijk lang is (max 600 tekens).
-    // Dit voorkomt dat je onnodig veel tokens verbruikt.
-    const lastMsg = messages?.[messages.length - 1];
-    if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
-        return new Response(JSON.stringify({ 
-            message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
-            recommendations: [] 
-        }), { status: 400, headers: corsHeaders });
-    }
-    // ----------------------------------
+        // Check of de laatste input niet belachelijk lang is (max 600 tekens).
+        // Dit voorkomt dat je onnodig veel tokens verbruikt.
+        const lastMsg = messages?.[messages.length - 1];
+        if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
+            return new Response(JSON.stringify({ 
+                message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
+                recommendations: [] 
+            }), { status: 400, headers: headers }); // <-- PATCH: headers var gebruiken
+        }
+        // ----------------------------------
 
         tFilterStart = Date.now();
         const userCity = (context?.destination || "").toLowerCase().trim();
@@ -360,7 +383,7 @@ LOGIC FLOW (CRITICAL):
 2. **DECIDE**: 
    - **Scenario A (Missing Info):** If the user request is vague (e.g. just "Antigua" or "Digital Nomad") and you need to know more (e.g. "Party vs Chill?" or "Coworking vs Room Wifi?"): 
      -> ACTION: Ask a clarifying question in 'message'. 
-     -> ACTION: Generate 2-4 short, punchy 'suggestions' (bubbles) for the user to click (e.g. ["Party 🍺", "Chill 🍃", "Work 💻"]).
+     -> ACTION: Generate 2-4 short, punchy 'suggestions' (bubbles) for the user to click (e.g. ["Party 🍺", "Chill 🍃", "Work 💻"]). 
      -> ACTION: Set 'recommendations' to []. 
    - **Scenario B (Clear Info):** If you have enough info to make a good match: 
      -> ACTION: Provide the advice in 'message'. 
@@ -475,7 +498,7 @@ OUTPUT JSON STRUCTURE:
         }));
         
         return new Response(content, {
-            status: 200, headers: corsHeaders 
+            status: 200, headers: headers // <-- PATCH: Gebruik de dynamische headers!
         });
 
     } catch (error: any) {
@@ -487,6 +510,6 @@ OUTPUT JSON STRUCTURE:
             ms_filter_and_pool: tFilterEnd && tFilterStart ? (tFilterEnd - tFilterStart) : null,
             ms_openai_fetch_and_json: tOpenAIEnd && tOpenAIStart ? (tOpenAIEnd - tOpenAIStart) : null
         }));
-        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: headers }); // <-- PATCH: Ook hier!
     }
 }
