@@ -31,7 +31,11 @@ function getCorsHeaders(request: Request) {
     };
 }
 
-const SHEET_CSV_URL = process.env.SHEET_CSV_URL || "";
+// --- CONFIGURATIE: LANDEN EN HUN SPREADSHEETS ---
+const COUNTRY_MAP: Record<string, string | undefined> = {
+    "Guatemala": process.env.SHEET_CSV_GUATEMALA,
+    "Belize": process.env.SHEET_CSV_BELIZE
+};
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
@@ -303,41 +307,58 @@ export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
 
-        tSheetStart = Date.now();
+        // 1. EERST JSON LEZEN (We hebben de 'context' nodig voor de landkeuze)
+        // Dit moet EERST gebeuren, anders weten we niet welk land we moeten laden.
+        tReqJsonStart = Date.now();
+        const body = await req.json();
+        tReqJsonEnd = Date.now();
+        const { messages, context } = body;
 
+        // 2. BEPAAL WELK LAND HET IS & KIES DE JUISTE URL
+        const selectedCountry = context?.country || "Guatemala";
+        const csvUrl = COUNTRY_MAP[selectedCountry];
+
+        if (!csvUrl) {
+            // Geen URL gevonden? Stop direct.
+            return new Response(JSON.stringify({ 
+                message: `Configuratie fout: Land '${selectedCountry}' is niet gekoppeld in de backend.`, 
+                recommendations: [] 
+            }), { status: 400, headers: safeHeaders });
+        }
+
+        // 3. NU PAS DE DATA OPHALEN (Met de juiste csvUrl)
+        tSheetStart = Date.now();
         const now = Date.now();
         const cacheFresh = cachedHostelData && (now - cacheUpdatedAt) < CACHE_TTL_MS;
 
         let hostelData: any[] = [];
 
-        if (cacheFresh) {
-            hostelData = cachedHostelData as any[];
-            tSheetEnd = Date.now();
-            tParseStart = Date.now();
-            tParseEnd = Date.now();
-        } else {
-            const sheetRes = await fetch(SHEET_CSV_URL, {
-                cache: "force-cache",
-                headers: { "Cache-Control": "max-age=300" }
-            });
-            
-            const csvRaw = await sheetRes.text();
-            tSheetEnd = Date.now();
-
-            tParseStart = Date.now();
-            hostelData = parseCSV(csvRaw);
-            tParseEnd = Date.now();
-
-            cachedCsvRaw = csvRaw;
-            cachedHostelData = hostelData;
-            cacheUpdatedAt = now;
+        // Cache logica: we checken of de cache 'fresh' is. 
+        // Bij een landwissel is de cache niet relevant, dus we laden vers of voegen complexere logica toe.
+        // Voor nu: als we wisselen, fetchen we vers.
+        if (cacheFresh && cachedCsvRaw) {
+             // In een productie-omgeving zou je hier checken of de cache matcht met het land.
+             // Omdat we nu testen met verschillende landen, doen we de fetch om zeker te zijn.
+             // Wil je snelheid? Zet dit blok weer aan en zorg dat de cache per land wordt opgeslagen.
         }
+        
+        // --- FETCH DE DATA ---
+        const sheetRes = await fetch(csvUrl, {
+            cache: "no-store", // Zet dit later op 'force-cache' voor snelheid
+            headers: { "Cache-Control": "no-cache" }
+        });
+        
+        const csvRaw = await sheetRes.text();
+        tSheetEnd = Date.now();
 
-        tReqJsonStart = Date.now();
-        const body = await req.json();
-        tReqJsonEnd = Date.now();
+        tParseStart = Date.now();
+        hostelData = parseCSV(csvRaw);
+        tParseEnd = Date.now();
 
-        const { messages, context } = body;
+        // Update de cache voor de volgende keer
+        cachedCsvRaw = csvRaw;
+        cachedHostelData = hostelData;
+        cacheUpdatedAt = now;
 
         // --- BEVEILIGING TEGEN MISBRUIK ---
         // Check of de laatste input niet belachelijk lang is (max 600 tekens).
@@ -380,7 +401,7 @@ export async function POST(req: Request) {
             body: JSON.stringify({
                 model: "gpt-4o-mini",
                 messages: [
-{ 
+                    { 
                         role: "system", 
                         content: `You are the Expert Hostel Matchmaker.
 
@@ -473,10 +494,10 @@ OUTPUT JSON STRUCTURE:
         "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
         "vibe_logic": "Explain vibe match based on pre-calc score.",
         "sentiment_logic": "Analysis of csv.overal_sentiment.",
-"pulse_summary_proof": "EXTRACT THE EXACT TEXT VALUE from the 'pulse_summary' field in the database. Do NOT write 'RAW DATA'.", // AANGEPAST
-        "sentiment_proof": "EXTRACT THE EXACT TEXT VALUE from the 'overal_sentiment' field in the database. Do NOT write 'RAW DATA'.", // AANGEPAST
-        "nomad_proof": "EXTRACT THE EXACT TEXT VALUE from the 'digital_nomad_score' field in the database.", // AANGEPAST
-        "solo_proof": "EXTRACT THE EXACT TEXT VALUE from the 'solo_verdict' field in the database." // AANGEPAST
+        "pulse_summary_proof": "EXTRACT THE EXACT TEXT VALUE from the 'pulse_summary' field in the database. Do NOT write 'RAW DATA'.", 
+        "sentiment_proof": "EXTRACT THE EXACT TEXT VALUE from the 'overal_sentiment' field in the database. Do NOT write 'RAW DATA'.", 
+        "nomad_proof": "EXTRACT THE EXACT TEXT VALUE from the 'digital_nomad_score' field in the database.", 
+        "solo_proof": "EXTRACT THE EXACT TEXT VALUE from the 'solo_verdict' field in the database." 
       }
     }
   ],
