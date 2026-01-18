@@ -86,17 +86,39 @@ function parseCSV(csvText: string) {
     const cleanText = csvText.trim().replace(/^\uFEFF/, "");
     
     const rows: string[][] = [];
-    let currCell = ""; let currRow: string[] = []; let inQuotes = false;
+    let currCell = ""; 
+    let currRow: string[] = []; 
+    let inQuotes = false;
+
+    // DETECTIE: Kijk of we ; of , moeten gebruiken
+    // We pakken de eerste regel en tellen wat vaker voorkomt.
+    const firstLine = cleanText.split('\n')[0];
+    const separator = firstLine.split(';').length > firstLine.split(',').length ? ';' : ',';
+
     for (let i = 0; i < cleanText.length; i++) {
-        const char = cleanText[i]; const nextChar = cleanText[i + 1];
-        if (char === '"' && inQuotes && nextChar === '"') { currCell += '"'; i++; }
-        else if (char === '"') { inQuotes = !inQuotes; }
-        else if (char === ',' && !inQuotes) { currRow.push(currCell.trim()); currCell = ""; }
-        else if (char === '\n' && !inQuotes) { currRow.push(currCell.trim()); rows.push(currRow); currRow = []; currCell = ""; }
-        else { currCell += char; }
+        const char = cleanText[i]; 
+        const nextChar = cleanText[i + 1];
+        
+        if (char === '"' && inQuotes && nextChar === '"') { 
+            currCell += '"'; i++; 
+        }
+        else if (char === '"') { 
+            inQuotes = !inQuotes; 
+        }
+        // HIER ZIT DE FIX (Gebruik variabele separator):
+        else if (char === separator && !inQuotes) { 
+            currRow.push(currCell.trim()); currCell = ""; 
+        }
+        else if (char === '\n' && !inQuotes) { 
+            currRow.push(currCell.trim()); rows.push(currRow); currRow = []; currCell = ""; 
+        }
+        else { 
+            currCell += char; 
+        }
     }
     if (currRow.length > 0 || currCell) { currRow.push(currCell.trim()); rows.push(currRow); }
 
+    // Headers schoonmaken (lowercase, geen vreemde tekens)
     const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
     
     return rows.slice(1).map(row => {
@@ -104,10 +126,17 @@ function parseCSV(csvText: string) {
         headers.forEach((header, i) => {
             let val = row[i] || "";
             if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+            
+            // JSON parsing safe-guard
             if (val.includes('{') && val.includes('}')) {
-                try { const sanitized = val.replace(/""/g, '"'); obj[header] = JSON.parse(sanitized); }
+                try { 
+                    const sanitized = val.replace(/""/g, '"'); 
+                    obj[header] = JSON.parse(sanitized); 
+                }
                 catch (e) { obj[header] = val; }
-            } else { obj[header] = val; }
+            } else { 
+                obj[header] = val; 
+            }
         });
         return obj;
     }).filter(h => h.hostel_name && h.hostel_name.length > 1);
