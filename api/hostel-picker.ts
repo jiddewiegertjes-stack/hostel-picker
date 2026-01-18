@@ -430,6 +430,9 @@ STRICT INTEL GATHERING (MANDATORY OVERRIDE):
 Before output, verify: (question_count_so_far <= 2). If question_count_so_far == 0 => ask a deepening question now.
 // ==============================
 
+ALWAYS OUTPUT EXACTLY 2 HOSTEL RECCOMENDATIONS.
+
+
 SCORING ALGORITHM (Weighted):
 ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo, Age, Size, Nationality) have been PRE-CALCULATED in '_computed_scores'.
 Your job is to apply the weights and synthesize the final verdict based on these numbers.
