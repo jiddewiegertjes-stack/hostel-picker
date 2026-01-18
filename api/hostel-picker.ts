@@ -6,14 +6,13 @@ const ALLOWED_ORIGINS = [
     "http://localhost:3000",            // Lokaal testen
 ];
 
-function getCorsHeaders(request: Request) {
+function getCorsHeaders(request) {
     const origin = request.headers.get("origin") || "";
     
     // CHECK 1: Staat hij hard op de lijst? (Productie & Localhost)
     const isWhitelisted = ALLOWED_ORIGINS.includes(origin);
 
     // CHECK 2: Is het een Vercel Preview URL? (Eindigt op .vercel.app)
-    // Dit zorgt dat al je test-omgevingen ook werken.
     const isVercelPreview = origin.endsWith(".vercel.app");
 
     if (isWhitelisted || isVercelPreview) {
@@ -32,33 +31,29 @@ function getCorsHeaders(request: Request) {
 }
 
 // --- CONFIGURATIE: LANDEN EN HUN SPREADSHEETS ---
-const COUNTRY_MAP: Record<string, string | undefined> = {
+const COUNTRY_MAP = {
     "Guatemala": process.env.SHEET_CSV_GUATEMALA,
     "Belize": process.env.SHEET_CSV_BELIZE
 };
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
 
-// MAPPING 1: FACILITIES (Vertaling van Frontend Intent naar Backend Keywords)
-const FEATURE_MAPPING: Record<string, string[]> = {
-    // Werk & Nomad
+// MAPPING 1: FACILITIES
+const FEATURE_MAPPING = {
     "work": ["coworking", "desk", "wifi", "monitor", "digital nomad"],
     "digital nomad": ["coworking", "fast wifi", "desk", "workspace"],
-    // Sociaal & Party
     "party": ["bar", "nightclub", "events", "beer pong", "happy hour", "pub crawl"],
     "social": ["common room", "bar", "terrace", "games", "family dinner", "activities"],
-    // Gemak & Eten
     "kitchen": ["kitchen", "cooking", "stove", "microwave", "oven"],
     "food": ["restaurant", "cafe", "meals", "breakfast"],
     "pool": ["pool", "swimming", "jacuzzi"],
     "gym": ["gym", "fitness", "workout", "yoga"],
-    // Kamer & Privacy
     "privacy": ["curtain", "pod", "private"],
     "ac": ["air conditioning", "a/c", "fan", "climate control"]
 };
 
-// MAPPING 2: VIBE (Sfeer labels matching)
-const VIBE_MAPPING: Record<string, string[]> = {
+// MAPPING 2: VIBE
+const VIBE_MAPPING = {
     "party": ["party", "nightlife", "loud", "active", "social"],
     "chill": ["chill", "quiet", "relax", "nature", "hammock", "peaceful"],
     "social": ["social", "community", "gathering", "family"],
@@ -67,26 +62,26 @@ const VIBE_MAPPING: Record<string, string[]> = {
 };
 
 /** ---- Simple in-memory cache (Edge warm instance) ---- */
-let cachedCsvRaw: string | null = null;
-let cachedHostelData: any[] | null = null;
+let cachedCsvRaw = null;
+let cachedHostelData = null;
 let cacheUpdatedAt = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // --- AANGEPASTE OPTIONS HANDLER ---
-export async function OPTIONS(request: Request) {
+export async function OPTIONS(request) {
     return new Response(null, { 
         status: 204, 
         headers: getCorsHeaders(request) 
     });
 }
 
-function parseCSV(csvText: string) {
+function parseCSV(csvText) {
     if (!csvText || csvText.length < 10) return [];
     
     const cleanText = csvText.trim().replace(/^\uFEFF/, "");
     
-    const rows: string[][] = [];
-    let currCell = ""; let currRow: string[] = []; let inQuotes = false;
+    const rows = [];
+    let currCell = ""; let currRow = []; let inQuotes = false;
     for (let i = 0; i < cleanText.length; i++) {
         const char = cleanText[i]; const nextChar = cleanText[i + 1];
         if (char === '"' && inQuotes && nextChar === '"') { currCell += '"'; i++; }
@@ -100,7 +95,7 @@ function parseCSV(csvText: string) {
     const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ""));
     
     return rows.slice(1).map(row => {
-        const obj: any = {};
+        const obj = {};
         headers.forEach((header, i) => {
             let val = row[i] || "";
             if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
@@ -113,11 +108,9 @@ function parseCSV(csvText: string) {
     }).filter(h => h.hostel_name && h.hostel_name.length > 1);
 }
 
-/** * NIEUW: Pre-calculation logic (Hybrid 3.0 - Full Normalization)
- * Voert harde berekeningen én mappings uit in TypeScript.
- */
-function enrichHostelData(hostel: any, userContext: any) {
-    // 1. Digital Nomad Score (Harde data uit JSON: Rank * 10)
+/** * NIEUW: Pre-calculation logic (Hybrid 3.0 - Full Normalization) */
+function enrichHostelData(hostel, userContext) {
+    // 1. Digital Nomad Score
     let nomadScore = 50; 
     try {
         if (hostel.digital_nomad_score) {
@@ -148,25 +141,19 @@ function enrichHostelData(hostel: any, userContext: any) {
         priceScore = 50; 
     }
 
-    // 4. Noise Score (Genormaliseerd: Match tussen Backend Score en User Voorkeur)
-    // Stap A: Backend vertalen naar 0-100 schaal
-    let noiseLevelBackend = 50; // default medium
-    // FIX: String() toegevoegd om crashes te voorkomen als data een getal is
+    // 4. Noise Score
+    let noiseLevelBackend = 50; 
     const noiseTxt = String(hostel.noise_level || "").toLowerCase();
     
     if (noiseTxt.includes("loud") || noiseTxt.includes("party") || noiseTxt.includes("music")) noiseLevelBackend = 90;
     else if (noiseTxt.includes("medium") || noiseTxt.includes("social")) noiseLevelBackend = 50;
     else if (noiseTxt.includes("quiet") || noiseTxt.includes("peace") || noiseTxt.includes("nature")) noiseLevelBackend = 15;
 
-    // Stap B: Matchen met User Input (slider 0-100)
-    // Als userContext.noiseLevel ontbreekt, aanname 50.
     const userNoisePref = userContext?.noiseLevel !== undefined ? parseInt(userContext.noiseLevel) : 50;
-    // Score is nabijheid (100 - verschil)
     const noiseMatchScore = Math.max(0, 100 - Math.abs(userNoisePref - noiseLevelBackend));
 
-    // 5. VIBE MATCH (Normalisatie via VIBE_MAPPING)
+    // 5. VIBE MATCH
     let vibeMatch = 50;
-    // FIX: String() toegevoegd
     const userVibeInput = String(userContext?.vibe || "").toLowerCase();
     const hostelVibeDna = String(hostel.vibe_dna || "").toLowerCase();
     
@@ -185,18 +172,15 @@ function enrichHostelData(hostel: any, userContext: any) {
     
     if (vibeChecks > 0) {
         vibeMatch = Math.round((vibeHits / vibeChecks) * 100);
-        // Bonus: Directe woordmatch
         if (hostelVibeDna.includes(userVibeInput)) vibeMatch = 100;
     }
 
-    // 6. FACILITIES MATCH (Normalisatie via FEATURE_MAPPING)
+    // 6. FACILITIES MATCH
     let facilitiesMatch = 50;
     let featuresFound = 0;
     let featuresLookedFor = 0;
 
-    // Scan context (vibe + requirements) op keywords
     const combinedReqs = ((userContext?.vibe || "") + " " + (userContext?.requirements || "")).toLowerCase();
-    // FIX: String() toegevoegd
     const hostelFacilities = String(hostel.facilities || "").toLowerCase();
 
     Object.keys(FEATURE_MAPPING).forEach(userKey => {
@@ -213,77 +197,66 @@ function enrichHostelData(hostel: any, userContext: any) {
         facilitiesMatch = Math.round((featuresFound / featuresLookedFor) * 100);
     }
 
-    // --- NIEUW: 7. AGE MATCH ---
+    // 7. AGE MATCH
     let ageMatch = 50;
     const userAge = parseInt(userContext?.age) || 25;
-    const hostelAvgAge = parseInt(hostel.overal_age) || 25; // Pakt '25' uit de CSV kolom
+    const hostelAvgAge = parseInt(hostel.overal_age) || 25;
     const ageDiff = Math.abs(userAge - hostelAvgAge);
-    // Score: 100 min 5 punten per jaar verschil. (Vb: User 25, Hostel 30 = 5 jaar diff = score 75)
     ageMatch = Math.max(0, 100 - (ageDiff * 5));
 
-    // --- NIEUW: 8. SIZE MATCH ---
+    // 8. SIZE MATCH
     let sizeMatch = 50;
-    const userSize = String(userContext?.size || "").toLowerCase(); // "small", "medium", "large"
-    
-    // FIX: String() toegevoegd om crashes te voorkomen
+    const userSize = String(userContext?.size || "").toLowerCase();
     const hostelSizeInfo = String(hostel.rooms_info || "").toLowerCase();
     
-    // Simpele woordmatch op de CSV tekst (bijv. "Medium, total capacity 30")
     if (hostelSizeInfo.includes(userSize)) {
         sizeMatch = 100;
     } else if (
         (userSize === "small" && hostelSizeInfo.includes("medium")) ||
         (userSize === "large" && hostelSizeInfo.includes("medium"))
     ) {
-        sizeMatch = 70; // Close enough
+        sizeMatch = 70;
     } else {
-        sizeMatch = 30; // Mismatch (bv Small vs Large)
+        sizeMatch = 30;
     }
 
-    // --- NIEUW: 9. NATIONALITY MATCH ---
-    let nationalityMatch = 0; // Default 0 (niet relevant als user niks invult)
+    // 9. NATIONALITY MATCH
+    let nationalityMatch = 0;
     const userNat = String(userContext?.nationalityPref || "").trim();
     
     if (userNat.length > 0) {
         try {
-            // CSV voorbeeld: {"USA":18,"Germany":8,"England":18}
-            // Backend moet dit parsen als het een string is, of direct gebruiken
             let countryData = hostel.country_info;
             if (typeof countryData === 'string') {
-                // Soms is JSON "dirty", probeer te fixen of parse direct
                 try { countryData = JSON.parse(countryData); } catch(e) {}
             }
             
-            // Zoek user input (bv "Dutch" of "Germany") in de keys
             const matchKey = Object.keys(countryData || {}).find(k => 
                 k.toLowerCase().includes(userNat.toLowerCase()) || 
                 userNat.toLowerCase().includes(k.toLowerCase())
             );
 
             if (matchKey) {
-                // Als nationaliteit gevonden is, score = 100
                 nationalityMatch = 100;
             } else {
-                nationalityMatch = 20; // Niet gevonden
+                nationalityMatch = 20;
             }
         } catch (e) {
-            nationalityMatch = 50; // Fout in data, geef neutraal
+            nationalityMatch = 50;
         }
     } else {
-        nationalityMatch = 100; // Geen voorkeur? Dan is alles goed.
+        nationalityMatch = 100;
     }
 
-    // Voeg berekende scores toe aan het object (Original data stays available!)
     return {
         ...hostel,
         _computed_scores: {
             nomad: nomadScore,
             solo: soloScore,
-            noise_match: noiseMatchScore, // Veranderd naar 'match' score
+            noise_match: noiseMatchScore,
             price_match: Math.round(priceScore),
             vibe_match: vibeMatch,
             facilities_match: facilitiesMatch,
-            // Nieuwe scores toevoegen:
             age_match: ageMatch,
             size_match: sizeMatch,
             nationality_match: nationalityMatch
@@ -291,11 +264,9 @@ function enrichHostelData(hostel: any, userContext: any) {
     };
 }
 
-// --- AANGEPASTE POST HANDLER MET SECURITY CHECK ---
-export async function POST(req: Request) {
+// --- AANGEPASTE POST HANDLER ---
+export async function POST(req) {
     const t0 = Date.now();
-    
-    // 1. HAAL DE VEILIGE HEADERS OP
     const safeHeaders = getCorsHeaders(req);
 
     let tSheetStart = 0, tSheetEnd = 0;
@@ -307,44 +278,33 @@ export async function POST(req: Request) {
     try {
         const apiKey = process.env.OPENAI_API_KEY;
 
-        // 1. EERST JSON LEZEN (We hebben de 'context' nodig voor de landkeuze)
-        // Dit moet EERST gebeuren, anders weten we niet welk land we moeten laden.
+        // 1. Context lezen
         tReqJsonStart = Date.now();
         const body = await req.json();
         tReqJsonEnd = Date.now();
         const { messages, context } = body;
 
-        // 2. BEPAAL WELK LAND HET IS & KIES DE JUISTE URL
+        // 2. Land bepalen
         const selectedCountry = context?.country || "Guatemala";
         const csvUrl = COUNTRY_MAP[selectedCountry];
 
         if (!csvUrl) {
-            // Geen URL gevonden? Stop direct.
             return new Response(JSON.stringify({ 
                 message: `Configuratie fout: Land '${selectedCountry}' is niet gekoppeld in de backend.`, 
                 recommendations: [] 
             }), { status: 400, headers: safeHeaders });
         }
 
-        // 3. NU PAS DE DATA OPHALEN (Met de juiste csvUrl)
+        // 3. Data ophalen (met simpele cache check)
         tSheetStart = Date.now();
         const now = Date.now();
         const cacheFresh = cachedHostelData && (now - cacheUpdatedAt) < CACHE_TTL_MS;
 
-        let hostelData: any[] = [];
+        let hostelData = [];
 
-        // Cache logica: we checken of de cache 'fresh' is. 
-        // Bij een landwissel is de cache niet relevant, dus we laden vers of voegen complexere logica toe.
-        // Voor nu: als we wisselen, fetchen we vers.
-        if (cacheFresh && cachedCsvRaw) {
-             // In een productie-omgeving zou je hier checken of de cache matcht met het land.
-             // Omdat we nu testen met verschillende landen, doen we de fetch om zeker te zijn.
-             // Wil je snelheid? Zet dit blok weer aan en zorg dat de cache per land wordt opgeslagen.
-        }
-        
-        // --- FETCH DE DATA ---
+        // In productie zou je de cache slimmer gebruiken, maar nu fetchen we om zeker te zijn.
         const sheetRes = await fetch(csvUrl, {
-            cache: "no-store", // Zet dit later op 'force-cache' voor snelheid
+            cache: "no-store",
             headers: { "Cache-Control": "no-cache" }
         });
         
@@ -355,43 +315,52 @@ export async function POST(req: Request) {
         hostelData = parseCSV(csvRaw);
         tParseEnd = Date.now();
 
-        // Update de cache voor de volgende keer
+        // Update de cache
         cachedCsvRaw = csvRaw;
         cachedHostelData = hostelData;
         cacheUpdatedAt = now;
 
-        // --- BEVEILIGING TEGEN MISBRUIK ---
-        // Check of de laatste input niet belachelijk lang is (max 600 tekens).
+        // --- BEVEILIGING ---
         const lastMsg = messages?.[messages.length - 1];
         if (lastMsg && lastMsg.content && lastMsg.content.length > 600) {
-            // GEBRUIK safeHeaders IN ERROR RESPONSE
             return new Response(JSON.stringify({ 
                 message: "Bericht te lang. Houd het kort a.u.b. (max 600 tekens).", 
                 recommendations: [] 
             }), { status: 400, headers: safeHeaders });
         }
-        // ----------------------------------
 
+        // --- STAP 4: FILTER OP STAD (CORRECTE VERSIE) ---
         tFilterStart = Date.now();
         const userCity = (context?.destination || "").toLowerCase().trim();
+
         const finalData = hostelData.filter(h => {
-            const cityInSheet = (h.city || "").toLowerCase().trim();
+            // Check op verschillende mogelijke kolomnamen uit je CSV
+            const cityInSheet = (h.city || h.hostel_city || h.destination || "").toLowerCase().trim();
             return cityInSheet === userCity;
         });
+
+        // GEBRUIK ALLEEN DE GEFILTERDE DATA
+        let pool = finalData; 
+
+        // Als er geen hostels in die stad zijn, stop hier.
+        if (pool.length === 0) {
+            return new Response(JSON.stringify({ 
+                message: `Ik kon geen hostels vinden in de stad "${context?.destination}". Controleer de spelling of kies een andere stad.`, 
+                recommendations: [],
+                suggestions: ["Kies andere stad 📍"]
+            }), { status: 200, headers: safeHeaders });
+        }
         
-        let pool = finalData.length > 0 ? finalData : hostelData.slice(0, 25);
-        
-        // NIEUW: Verrijk de pool met harde berekeningen & Normalisaties
+        // Verrijk de gefilterde data
         pool = pool.map(h => enrichHostelData(h, context));
         
         tFilterEnd = Date.now();
 
         // ------------------------------------------------------------------
-        // DYNAMIC WEIGHTING LOGIC (NOMAD & SOLO)
+        // AI AANROEP MET GEFILTERDE DATA
         // ------------------------------------------------------------------
         const nomadWeight = context?.nomadMode ? "1.5" : "0.5";
         const soloWeight = context?.soloMode ? "1.5" : "0.5";
-
         const poolJsonChars = JSON.stringify(pool).length;
 
         tOpenAIStart = Date.now();
@@ -406,83 +375,19 @@ export async function POST(req: Request) {
                         content: `You are the Expert Hostel Matchmaker.
 
 // ==============================
-// NEW STRICT QUESTION OVERRIDES
-// (ADD-ONLY: do not remove any existing prompt text below)
+// STRICT RULES
 // ==============================
+1. STRICT INTEL GATHERING: You MUST ask 1-2 deepening questions if needed before recommending.
+2. FILTERED POOL: The user is looking in specific city. ONLY use the hostels provided in the 'DATABASE'.
+3. SCORING: Use '_computed_scores' for your decision.
 
-STRICT INTEL GATHERING (MANDATORY OVERRIDE):
-- You MUST ask at least 1 and at most 2 clarifying questions before giving any hostel recommendations.
-- Questions must ALWAYS be DEEPENING (verdiepend), never BROADENING (verbredend).
-  - Deepening = request precision on signals already present in USER CONTEXT and/or chat history.
-  - Not allowed = introducing new preference categories the user did not hint at.
-- Every question MUST be grounded in:
-  1) USER CONTEXT (fixed fields like vibe, noiseLevel, maxPrice, size, age, nomadMode, soloMode, nationalityPref, destination)
-  2) chat history (messages)
-- If you ask a question, you MUST return:
-  - "recommendations": []
-  - 2–4 "suggestions" that are mobile-friendly, tap-ready answers to THAT question.
-    - Suggestions must be short, mutually exclusive, and cover clear extremes when relevant.
-    - Use emoji and compact labels (examples: "Quiet 💤", "Balanced 🙂", "Loud/Party 🔊" or "Coworking 🧑‍💻", "Room Wi-Fi 🛏️", "Both ✅").
-- You may ONLY switch to recommendations mode AFTER at least 1 deepening question has been asked and answered in the conversation.
-- You must NEVER ask more than 2 questions total across the whole conversation. If you have already asked 2, you MUST produce recommendations next.
-
-// OPTIONAL SELF-CHECK (internal):
-Before output, verify: (question_count_so_far <= 2). If question_count_so_far == 0 => ask a deepening question now.
-// ==============================
-
-ALWAYS OUTPUT EXACTLY 2 HOSTEL RECCOMENDATIONS.
-
-
-SCORING ALGORITHM (Weighted):
-ALL key metrics (Price, Facilities, Vibe, Noise, Nomad, Solo, Age, Size, Nationality) have been PRE-CALCULATED in '_computed_scores'.
-Your job is to apply the weights and synthesize the final verdict based on these numbers.
-
-1. FACILITIES MATCH (Weight 0.8):
-   - Use '_computed_scores.facilities_match' (0-100).
-   - This score represents strict matching of user requirements (e.g. "Work", "Kitchen", "Party") against available facilities.
-
-2. PRICE MATCH (Weight 1.0):
-   - Use '_computed_scores.price_match' (0-100).
-
-3. VIBE MATCH (Weight 1.0):
-   - Use '_computed_scores.vibe_match' (0-100).
-   - Based on semantic keyword mapping.
-
-4. NOISE MATCH (Weight 0.5):
-   - Use '_computed_scores.noise_match'.
-   - This score already accounts for user preference (Score 100 = Perfect match for user's desired noise level).
-
-5. SENTIMENT (Weight 0.7):
-   - EXTRACT 'score' from 'csv.overal_sentiment' JSON.
-
-6. DIGITAL NOMAD SCORE (Weight ${nomadWeight}):
-   - Use '_computed_scores.nomad'.
-   - *Logic:* If user is Nomad, this is critical. If not, ignore unless exceptional.
-
-7. SOLO TRAVELER SCORE (Weight ${soloWeight}):
-   - Use '_computed_scores.solo'.
-   - *Logic:* If user is Solo, this is very important.
-
-8. AGE MATCH (Weight 0.5):
-   - Use '_computed_scores.age_match'. 
-
-9. SIZE PREFERENCE (Weight 0.5):
-   - Use '_computed_scores.size_match'.
-
-10. NATIONALITY CONNECTION (Weight 0.1):
-   - Use '_computed_scores.nationality_match'.
-
-TONE OF VOICE:
-You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
-
-AUDIT REQUIREMENTS:
-In 'audit_log', SHOW THE MATH using the pre-computed values.
-Example: "Facilities: (Pre-calc 100% * 1.5) + Vibe: (Pre-calc 80% * 1.2) ... = Total%"
+TONE: Straight-Talking Traveler.
 
 DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
+WEIGHTS: Nomad=${nomadWeight}, Solo=${soloWeight}
 
-OUTPUT JSON STRUCTURE:
+OUTPUT JSON:
 {
   "recommendations": [
     {
@@ -491,23 +396,14 @@ OUTPUT JSON STRUCTURE:
       "matchPercentage": 0-100,
       "price": "pricing",
       "vibe": "vibe_dna",
-      "hostel_img": "EXACT URL FROM csv.hostel_img",
+      "hostel_img": "url",
       "alert": "red_flags or 'None'",
-      "reason": "MANDATORY: Act as a travel consultant. Don't just list matches; INTERPRET them. If ages match closely, say they'll fit in perfectly. If the price is lower than budget, call it a 'steal'. If they are solo, explain EXACTLY which feature (e.g., family dinners) solves their fear of being alone.",
-      "audit_log": {
-        "score_breakdown": "MUST show the calculation using labels.",
-        "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
-        "vibe_logic": "Explain vibe match based on pre-calc score.",
-        "sentiment_logic": "Analysis of csv.overal_sentiment.",
-        "pulse_summary_proof": "EXTRACT THE EXACT TEXT VALUE from the 'pulse_summary' field in the database. Do NOT write 'RAW DATA'.", 
-        "sentiment_proof": "EXTRACT THE EXACT TEXT VALUE from the 'overal_sentiment' field in the database. Do NOT write 'RAW DATA'.", 
-        "nomad_proof": "EXTRACT THE EXACT TEXT VALUE from the 'digital_nomad_score' field in the database.", 
-        "solo_proof": "EXTRACT THE EXACT TEXT VALUE from the 'solo_verdict' field in the database." 
-      }
+      "reason": "Explain WHY based on features.",
+      "audit_log": { ... }
     }
   ],
-  "message": "Strategic advice or clarifying questions.",
-  "suggestions": ["Option 1", "Option 2", "Option 3"]
+  "message": "Advice or question.",
+  "suggestions": ["Opt 1", "Opt 2"]
 }`
                     },
                     ...messages
@@ -531,21 +427,14 @@ OUTPUT JSON STRUCTURE:
             pool_json_chars: poolJsonChars
         }));
         
-        // GEBRUIK safeHeaders IN SUCCESS RESPONSE
         return new Response(content, {
             status: 200, headers: safeHeaders 
         });
 
-    } catch (error: any) {
+    } catch (error) {
         console.log(JSON.stringify({
-            ms_total: Date.now() - t0,
-            ms_sheet_fetch_and_text: tSheetEnd && tSheetStart ? (tSheetEnd - tSheetStart) : null,
-            ms_csv_parse: tParseEnd && tParseStart ? (tParseEnd - tParseStart) : null,
-            ms_req_json: tReqJsonEnd && tReqJsonStart ? (tReqJsonEnd - tReqJsonStart) : null,
-            ms_filter_and_pool: tFilterEnd && tFilterStart ? (tFilterEnd - tFilterStart) : null,
-            ms_openai_fetch_and_json: tOpenAIEnd && tOpenAIStart ? (tOpenAIEnd - tOpenAIStart) : null
+            error: error.message
         }));
-        // GEBRUIK safeHeaders IN ERROR RESPONSE
         return new Response(JSON.stringify({ message: "System Error: " + error.message, recommendations: null }), { status: 200, headers: safeHeaders });
     }
 }
