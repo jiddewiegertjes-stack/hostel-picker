@@ -291,6 +291,64 @@ function enrichHostelData(hostel: any, userContext: any) {
     };
 }
 
+// --- EMAIL FUNCTIE (RESEND) ---
+async function sendTop3Email(email: string, recommendations: any[], context: any) {
+    const resendApiKey = process.env.RESEND_API_KEY; // Zorg dat deze in .env staat
+    
+    if (!resendApiKey) {
+        console.error("Geen RESEND_API_KEY gevonden.");
+        return;
+    }
+
+    const listHtml = recommendations.map((rec, i) => `
+        <div style="border: 1px solid #e5e7eb; padding: 20px; margin-bottom: 24px; border-radius: 12px; font-family: sans-serif; background-color: #fafafa;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="color: #111; margin: 0; font-size: 18px;">#${i + 1}. ${rec.name}</h3>
+                <span style="background: ${rec.matchPercentage > 85 ? '#dcfce7' : '#fef9c3'}; color: ${rec.matchPercentage > 85 ? '#166534' : '#854d0e'}; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: bold;">
+                    ${rec.matchPercentage}% Match
+                </span>
+            </div>
+            <p style="color: #4b5563; font-size: 14px; line-height: 1.6; margin-top: 0;">${rec.reason}</p>
+            <div style="margin-top: 12px; font-size: 13px; color: #6b7280;">
+                <span style="margin-right: 15px;">💰 ${rec.price}</span>
+                <span>📍 ${rec.location}</span>
+            </div>
+            <div style="margin-top: 16px;">
+                 <a href="${rec.hostel_img}" style="background: #6366f1; color: #fff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: bold; display:inline-block;">Bekijk Hostel &rarr;</a>
+            </div>
+        </div>
+    `).join("");
+
+    await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${resendApiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            from: "HostelMatchmaker <onboarding@resend.dev>", // Pas dit aan zodra je een eigen domein hebt in Resend
+            to: [email],
+            subject: `🏝️ Jouw Top 3 Hostels in ${context.destination}`,
+            html: `
+                <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+                    <h1 style="color: #111; font-size: 24px;">Hostel Rapport: ${context.destination}</h1>
+                    <p style="font-size: 16px; line-height: 1.6;">Hi!</p>
+                    <p style="font-size: 16px; line-height: 1.6;">
+                        Op basis van jouw zoekopdracht (<strong>${context.vibe}</strong>, budget <strong>€${context.maxPrice}</strong>, leeftijd <strong>${context.age}</strong>), 
+                        hebben we het volgende advies samengesteld:
+                    </p>
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
+                    ${listHtml}
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
+                    <p style="font-size: 12px; color: #9ca3af; text-align: center;">
+                        Gegenereerd door HostelMatchmaker AI v4.2
+                    </p>
+                </div>
+            `
+        })
+    });
+}
+
 // --- AANGEPASTE POST HANDLER MET SECURITY CHECK ---
 export async function POST(req: Request) {
     const t0 = Date.now();
@@ -312,7 +370,11 @@ export async function POST(req: Request) {
         tReqJsonStart = Date.now();
         const body = await req.json();
         tReqJsonEnd = Date.now();
-        const { messages, context } = body;
+        const { messages, context, email } = body; // <--- LEES HIER OOK EMAIL
+
+        // --- CHECK MODE: EMAIL OF PREVIEW ---
+        const isEmailMode = !!(email && email.includes("@"));
+        const limit = isEmailMode ? 3 : 1; 
 
         // 2. BEPAAL WELK LAND HET IS & KIES DE JUISTE URL
         const selectedCountry = context?.country || "Guatemala";
@@ -479,6 +541,10 @@ Example: "Facilities: (Pre-calc 100% * 1.5) + Vibe: (Pre-calc 80% * 1.2) ... = T
 DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
 
+OUTPUT CONFIGURATION:
+- Return EXACTLY ${limit} recommendation(s).
+${isEmailMode ? "- MODE: EMAIL REPORT. Be detailed, persuasive, and thorough." : "- MODE: QUICK PREVIEW. Be concise. Only show the absolute winner."}
+
 OUTPUT JSON STRUCTURE:
 {
   "recommendations": [
@@ -516,6 +582,18 @@ OUTPUT JSON STRUCTURE:
 
         const aiData = await response.json();
         const content = aiData.choices[0].message.content;
+
+        // --- EMAIL VERZENDING LOGICA ---
+        if (isEmailMode) {
+            try {
+                const parsed = JSON.parse(content);
+                if (parsed.recommendations && parsed.recommendations.length > 0) {
+                    await sendTop3Email(email, parsed.recommendations, context);
+                }
+            } catch (e) {
+                console.error("Fout bij verwerken email:", e);
+            }
+        }
 
         console.log(JSON.stringify({
             ms_total: Date.now() - t0,
