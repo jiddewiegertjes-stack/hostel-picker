@@ -326,7 +326,7 @@ async function sendTop3Email(email: string, recommendations: any[], context: any
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            from: "HostelMatchmaker <onboarding@resend.dev>", // Pas dit aan zodra je een eigen domein hebt in Resend
+            from: "HostelMatchmaker <hello@trekvice.com>", // Pas dit aan zodra je een eigen domein hebt in Resend
             to: [email],
             subject: `🏝️ Jouw Top 3 Hostels in ${context.destination}`,
             html: `
