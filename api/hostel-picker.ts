@@ -291,34 +291,85 @@ function enrichHostelData(hostel: any, userContext: any) {
     };
 }
 
-// --- EMAIL FUNCTIE (RESEND) ---
+// --- AANGEPASTE EMAIL FUNCTIE (ENGELS + PARTNERS + TOP 4) ---
 async function sendTop3Email(email: string, recommendations: any[], context: any) {
-    const resendApiKey = process.env.RESEND_API_KEY; // Zorg dat deze in .env staat
-    
+    const resendApiKey = process.env.RESEND_API_KEY;
+
     if (!resendApiKey) {
         console.error("Geen RESEND_API_KEY gevonden.");
         return;
     }
 
+    // 1. Bouw de Hostel Kaarten (Top 4)
     const listHtml = recommendations.map((rec, i) => `
-        <div style="border: 1px solid #e5e7eb; padding: 20px; margin-bottom: 24px; border-radius: 12px; font-family: sans-serif; background-color: #fafafa;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h3 style="color: #111; margin: 0; font-size: 18px;">#${i + 1}. ${rec.name}</h3>
-                <span style="background: ${rec.matchPercentage > 85 ? '#dcfce7' : '#fef9c3'}; color: ${rec.matchPercentage > 85 ? '#166534' : '#854d0e'}; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: bold;">
+        <div style="background-color: #ffffff; border: 1px solid #e5e7eb; padding: 20px; margin-bottom: 24px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+                <h3 style="color: #111; margin: 0; font-size: 18px; font-weight: 700;">#${i + 1}. ${rec.name}</h3>
+                <span style="background: ${rec.matchPercentage > 85 ? '#dcfce7' : '#fef9c3'}; color: ${rec.matchPercentage > 85 ? '#166534' : '#854d0e'}; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: bold; white-space: nowrap;">
                     ${rec.matchPercentage}% Match
                 </span>
             </div>
-            <p style="color: #4b5563; font-size: 14px; line-height: 1.6; margin-top: 0;">${rec.reason}</p>
-            <div style="margin-top: 12px; font-size: 13px; color: #6b7280;">
-                <span style="margin-right: 15px;">💰 ${rec.price}</span>
-                <span>📍 ${rec.location}</span>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; font-size: 12px; color: #4b5563;">
+                <div style="background: #f3f4f6; padding: 4px 8px; border-radius: 6px;">
+                    ⭐ ${rec.sentiment_short || 'Great Vibe'}
+                </div>
+                <div style="background: #f3f4f6; padding: 4px 8px; border-radius: 6px;">
+                    👤 ${rec.solo_info || 'Good for solo'}
+                </div>
+                <div style="background: #f3f4f6; padding: 4px 8px; border-radius: 6px;">
+                    💻 ${rec.nomad_info || 'Wifi zone'}
+                </div>
             </div>
-            <div style="margin-top: 16px;">
-                 <a href="${rec.hostel_img}" style="background: #6366f1; color: #fff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: bold; display:inline-block;">Bekijk Hostel &rarr;</a>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.6; margin-top: 0; margin-bottom: 16px;">
+                ${rec.reason}
+            </p>
+
+            <div style="border-top: 1px dashed #e5e7eb; padding-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="font-size: 13px; color: #6b7280;">
+                    <span style="margin-right: 10px;">💰 ${rec.price}</span>
+                    <span>📍 ${rec.location}</span>
+                </div>
+                <div>
+                     <a href="${rec.hostel_img}" style="background: #6366f1; color: #fff; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: bold; display:inline-block;">View Hostel &rarr;</a>
+                </div>
             </div>
         </div>
     `).join("");
 
+    // 2. Het Partner Blok (Vast blokje)
+    const partnerBlockHtml = `
+        <div style="margin-top: 40px; background-color: #111827; color: #fff; padding: 24px; border-radius: 12px; text-align: center;">
+            <h3 style="margin: 0 0 16px 0; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; color: #fbbf24;">✨ Travel Essentials</h3>
+            <p style="font-size: 13px; color: #9ca3af; margin-bottom: 20px;">Don't forget these before you fly.</p>
+            
+            <table width="100%" cellpadding="0" cellspacing="0" style="width: 100%;">
+                <tr>
+                    <td align="center" style="padding: 5px;">
+                        <a href="https://www.airalo.com" target="_blank" style="display: block; background: #262626; padding: 12px; border-radius: 8px; text-decoration: none; color: #fff; border: 1px solid #374151;">
+                            <div style="font-weight: bold; font-size: 14px;">📶 Airalo</div>
+                            <div style="font-size: 11px; color: #9ca3af;">eSIM Data</div>
+                        </a>
+                    </td>
+                    <td align="center" style="padding: 5px;">
+                        <a href="https://www.revolut.com" target="_blank" style="display: block; background: #262626; padding: 12px; border-radius: 8px; text-decoration: none; color: #fff; border: 1px solid #374151;">
+                            <div style="font-weight: bold; font-size: 14px;">💳 Revolut</div>
+                            <div style="font-size: 11px; color: #9ca3af;">No Fees</div>
+                        </a>
+                    </td>
+                    <td align="center" style="padding: 5px;">
+                        <a href="https://www.skyscanner.net" target="_blank" style="display: block; background: #262626; padding: 12px; border-radius: 8px; text-decoration: none; color: #fff; border: 1px solid #374151;">
+                            <div style="font-weight: bold; font-size: 14px;">✈️ Skyscanner</div>
+                            <div style="font-size: 11px; color: #9ca3af;">Cheap Flights</div>
+                        </a>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    `;
+
+    // 3. Verstuur de email (Layout Container)
     await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -326,23 +377,31 @@ async function sendTop3Email(email: string, recommendations: any[], context: any
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            from: "HostelMatchmaker <hello@trekvice.com>", // Pas dit aan zodra je een eigen domein hebt in Resend
+            from: "HostelMatchmaker <hello@trekvice.com>",
             to: [email],
-            subject: `🏝️ Jouw Top 3 Hostels in ${context.destination}`,
+            subject: `🏝️ Your Top 4 Hostels in ${context.destination}`,
             html: `
-                <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-                    <h1 style="color: #111; font-size: 24px;">Hostel Rapport: ${context.destination}</h1>
-                    <p style="font-size: 16px; line-height: 1.6;">Hi!</p>
-                    <p style="font-size: 16px; line-height: 1.6;">
-                        Op basis van jouw zoekopdracht (<strong>${context.vibe}</strong>, budget <strong>€${context.maxPrice}</strong>, leeftijd <strong>${context.age}</strong>), 
-                        hebben we het volgende advies samengesteld:
-                    </p>
-                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
-                    ${listHtml}
-                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
-                    <p style="font-size: 12px; color: #9ca3af; text-align: center;">
-                        Gegenereerd door HostelMatchmaker AI v4.2
-                    </p>
+                <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9fafb; color: #333;">
+                    
+                    <div style="padding: 24px;">
+                        <h1 style="color: #111; font-size: 22px; margin-top: 0;">Hostel Report: ${context.destination}</h1>
+                        <p style="font-size: 15px; line-height: 1.6; color: #4b5563;">
+                            Hi there! Based on your search (<strong>${context.vibe}</strong>, budget <strong>€${context.maxPrice}</strong>, age <strong>${context.age}</strong>), 
+                            we found the following matches for you:
+                        </p>
+                        
+                        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
+                        
+                        ${listHtml}
+                        
+                        ${partnerBlockHtml}
+                        
+                        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
+                        
+                        <p style="font-size: 11px; color: #9ca3af; text-align: center;">
+                            Generated by HostelMatchmaker AI v4.5
+                        </p>
+                    </div>
                 </div>
             `
         })
@@ -374,7 +433,7 @@ export async function POST(req: Request) {
 
         // --- CHECK MODE: EMAIL OF PREVIEW ---
         const isEmailMode = !!(email && email.includes("@"));
-        const limit = isEmailMode ? 3 : 1; 
+        const limit = isEmailMode ? 4 : 1; 
 
         // 2. BEPAAL WELK LAND HET IS & KIES DE JUISTE URL
         const selectedCountry = context?.country || "Guatemala";
@@ -542,8 +601,8 @@ DATABASE: ${JSON.stringify(pool)}
 USER CONTEXT: ${JSON.stringify(context)}
 
 OUTPUT CONFIGURATION:
-- Return EXACTLY ${limit} recommendation(s).
-${isEmailMode ? "- MODE: EMAIL REPORT. Be detailed, persuasive, and thorough." : "- MODE: QUICK PREVIEW. Be concise. Only show the absolute winner."}
+- Return EXACTLY ${limit} recommendation(s). (If fewer than ${limit} fit perfectly, return as many as possible).
+- LANGUAGE: ALL TEXT MUST BE IN ENGLISH.
 
 OUTPUT JSON STRUCTURE:
 {
@@ -557,6 +616,9 @@ OUTPUT JSON STRUCTURE:
       "hostel_img": "EXACT URL FROM csv.hostel_img",
       "alert": "red_flags or 'None'",
       "reason": "MANDATORY: Act as a travel consultant. Don't just list matches; INTERPRET them. If ages match closely, say they'll fit in perfectly. If the price is lower than budget, call it a 'steal'. If they are solo, explain EXACTLY which feature (e.g., family dinners) solves their fear of being alone.",
+      "sentiment_short": "e.g. 'Superb 9.2' or 'Very Popular'",
+      "solo_info": "e.g. 'Daily events' or 'Social atmosphere'",
+      "nomad_info": "e.g. 'Coworking space' or 'Fast WiFi'",
       "audit_log": {
         "score_breakdown": "MUST show the calculation using labels.",
         "facilities_logic": "Explain specific facilities found/missing based on facilities_match.",
