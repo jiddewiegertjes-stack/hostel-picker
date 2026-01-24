@@ -57,13 +57,15 @@ const FEATURE_MAPPING: Record<string, string[]> = {
     "ac": ["air conditioning", "a/c", "fan", "climate control"]
 };
 
-// MAPPING 2: VIBE (Sfeer labels matching)
+// MAPPING 2: VIBE (Sfeer labels matching) - AANGEPAST NAAR NIEUWE PROMPT
 const VIBE_MAPPING: Record<string, string[]> = {
-    "party": ["party", "nightlife", "loud", "active", "social"],
-    "chill": ["chill", "quiet", "relax", "nature", "hammock", "peaceful"],
-    "social": ["social", "community", "gathering", "family"],
-    "work": ["digital nomad", "focused", "quiet", "hub", "coworking"],
-    "nature": ["nature", "garden", "view", "eco", "jungle"]
+    "wild party": ["party-animal"],
+    "super social": ["social-connector"],
+    "small & cozy": ["homely-cozy"],
+    "fancy & modern": ["boutique-luxury"],
+    "quiet & relaxed": ["chill-zen"],
+    "work-ready": ["digital-nomad"],
+    "budget & basic": ["budget-nofrills"]
 };
 
 /** ---- Simple in-memory cache (Edge warm instance) ---- */
@@ -332,7 +334,7 @@ async function sendTop3Email(email: string, recommendations: any[], context: any
                     <span>📍 ${rec.location}</span>
                 </div>
                 <div>
-                     <a href="${rec.hostel_img}" style="background: #6366f1; color: #fff; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: bold; display:inline-block;">View Hostel &rarr;</a>
+                      <a href="${rec.hostel_img}" style="background: #6366f1; color: #fff; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: bold; display:inline-block;">View Hostel &rarr;</a>
                 </div>
             </div>
         </div>
@@ -590,6 +592,31 @@ Your job is to apply the weights and synthesize the final verdict based on these
 10. NATIONALITY CONNECTION (Weight 0.1):
    - Use '_computed_scores.nationality_match'.
 
+4. Vibe DNA Hierarchy & Ranking (STRICT ORDER):
+   Select EXACTLY 3 tags from: [Party-Animal, Social-Connector, Homely-Cozy, Boutique-Luxury, Chill-Zen, Digital-Nomad, Budget-NoFrills].
+   
+   IMPORTANT: The order in the JSON array must reflect relevance (Rank 1 = Most Dominant).
+
+   - Rank 1: The Core Identity (The "Soul").
+     Choose the tag that represents the primary reason people stay here. If reviews mention the party atmosphere more than anything else, "Party-Animal" must be first. If it's famous for being quiet, "Chill-Zen" goes first.
+
+   - Rank 2: The Social/Facility Standard.
+     Choose the tag that describes the physical or social setup. (e.g., if it's a social place with pod-beds, use "Social-Connector" or "Boutique-Luxury").
+
+   - Rank 3: The Atmosphere Add-on.
+     Choose the supporting vibe. (e.g., if it’s a party place but also has great WiFi, use "Digital-Nomad").
+
+   Selection Logic:
+   * "Party-Animal": High-energy, loud, bar crawls, late nights.
+   * "Social-Connector": Organized events, family dinners, easy to meet people.
+   * "Homely-Cozy": Small, intimate, owner-run, "feels like home".
+   * "Boutique-Luxury": Modern design, privacy curtains, high-end bathrooms.
+   * "Chill-Zen": Quiet, relaxing, yoga, hammocks, good sleep.
+   * "Digital-Nomad": Workspace-focused, fast WiFi, laptop-friendly.
+   * "Budget-NoFrills": Basic, cheap, functional, no luxuries.
+
+   - Constraint: NEVER put "Party-Animal" and "Chill-Zen" in the same list. Order them by frequency of mention in the Review Bundle.
+
 TONE OF VOICE:
 You are the 'Straight-Talking Traveler'. Helpful, direct, non-corporate.
 
@@ -669,7 +696,7 @@ OUTPUT JSON STRUCTURE:
         }));
         
         // GEBRUIK safeHeaders IN SUCCESS RESPONSE
-        return new Response(content, {
+        return new Response(content, { 
             status: 200, headers: safeHeaders 
         });
 
