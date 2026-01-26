@@ -431,7 +431,26 @@ export async function POST(req: Request) {
         tReqJsonStart = Date.now();
         const body = await req.json();
         tReqJsonEnd = Date.now();
-        const { messages, context, email } = body; // <--- LEES HIER OOK EMAIL
+        const { messages, context, email, recommendations } = body; // <--- AANGEPAST: LEES HIER OOK 'recommendations' UIT
+
+        // --- NIEUW: DIRECTE EMAIL SHORT-CIRCUIT (DE AANPASSING) ---
+        // Als we een email én kant-en-klare recommendations hebben:
+        // Stuur mail en stop DIRECT. Geen AI, geen CSV fetch.
+        if (email && email.includes("@") && recommendations && Array.isArray(recommendations) && recommendations.length > 0) {
+            
+            console.log("🚀 Short-circuit: Sending email with existing results.");
+            
+            await sendTop3Email(email, recommendations, context);
+
+            return new Response(JSON.stringify({ 
+                message: "Email sent successfully with existing data.",
+                status: "sent"
+            }), { 
+                status: 200, 
+                headers: safeHeaders 
+            });
+        }
+        // -------------------------------------------------------------
 
         // --- CHECK MODE: EMAIL OF PREVIEW ---
         const isEmailMode = !!(email && email.includes("@"));
