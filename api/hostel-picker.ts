@@ -431,7 +431,7 @@ export async function POST(req: Request) {
         tReqJsonStart = Date.now();
         const body = await req.json();
         tReqJsonEnd = Date.now();
-        const { messages, context, email, recommendations } = body; // <--- AANGEPAST: LEES HIER OOK 'recommendations' UIT
+        const { messages, context, email, recommendations } = body; // <--- LEES HIER OOK 'recommendations' UIT
 
         // --- NIEUW: DIRECTE EMAIL SHORT-CIRCUIT (VERBETERD) ---
         // Als we een email én kant-en-klare recommendations hebben:
@@ -471,7 +471,7 @@ export async function POST(req: Request) {
 
         // --- CHECK MODE: EMAIL OF PREVIEW ---
         const isEmailMode = !!(email && email.includes("@"));
-        const limit = isEmailMode ? 4 : 1; 
+        const limit = 4; // <--- AANGEPAST: ALTIJD 4 GENEREREN, OOK ZONDER EMAIL! 
 
         // 2. BEPAAL WELK LAND HET IS & KIES DE JUISTE URL
         const selectedCountry = context?.country || "Guatemala";
