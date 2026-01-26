@@ -433,17 +433,34 @@ export async function POST(req: Request) {
         tReqJsonEnd = Date.now();
         const { messages, context, email, recommendations } = body; // <--- AANGEPAST: LEES HIER OOK 'recommendations' UIT
 
-        // --- NIEUW: DIRECTE EMAIL SHORT-CIRCUIT (DE AANPASSING) ---
+        // --- NIEUW: DIRECTE EMAIL SHORT-CIRCUIT (VERBETERD) ---
         // Als we een email én kant-en-klare recommendations hebben:
-        // Stuur mail en stop DIRECT. Geen AI, geen CSV fetch.
         if (email && email.includes("@") && recommendations && Array.isArray(recommendations) && recommendations.length > 0) {
             
-            console.log("🚀 Short-circuit: Sending email with existing results.");
+            console.log("🚀 Short-circuit: Processing existing results for email.");
+
+            // STAP A: Filter op de juiste stad (voorkomt die 4e in de verkeerde stad)
+            // We kijken of de naam van de stad (context.destination) voorkomt in de locatie van het hostel.
+            const targetCity = (context?.destination || "").toLowerCase().trim();
             
-            await sendTop3Email(email, recommendations, context);
+            let curatedList = recommendations.filter(rec => 
+                rec.location && rec.location.toLowerCase().includes(targetCity)
+            );
+
+            // Fallback: Als de filter per ongeluk alles weggooit (bv door een typfout),
+            // gebruik dan toch de originele lijst om een lege mail te voorkomen.
+            if (curatedList.length === 0) {
+                curatedList = recommendations;
+            }
+
+            // STAP B: Maximaal 3 limiet (werkt ook als er maar 1 of 2 zijn)
+            // .slice(0, 3) pakt index 0, 1 en 2. Als de lijst korter is, pakt hij alles wat er is.
+            const finalTop3 = curatedList.slice(0, 3);
+            
+            await sendTop3Email(email, finalTop3, context);
 
             return new Response(JSON.stringify({ 
-                message: "Email sent successfully with existing data.",
+                message: `Email sent successfully. Sent ${finalTop3.length} hostels.`,
                 status: "sent"
             }), { 
                 status: 200, 
