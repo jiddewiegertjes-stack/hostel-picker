@@ -34,7 +34,13 @@ function getCorsHeaders(request: Request) {
 // --- CONFIGURATIE: LANDEN EN HUN SPREADSHEETS ---
 const COUNTRY_MAP: Record<string, string | undefined> = {
     "Guatemala": process.env.SHEET_CSV_GUATEMALA,
-    "Belize": process.env.SHEET_CSV_BELIZE
+    "Belize": process.env.SHEET_CSV_BELIZE,
+    "Honduras": process.env.SHEET_CSV_HONDURAS,
+    "Nicaragua": process.env.SHEET_CSV_NICARAGUA,
+    "Mexico": process.env.SHEET_CSV_MEXICO,
+    "Panama": process.env.SHEET_CSV_PANAMA,
+    "Costa Rica": process.env.SHEET_CSV_COSTA_RICA,
+    "El Salvador": process.env.SHEET_CSV_EL_SALVADOR
 };
 
 // --- STAP 1: DEFINITIES VOOR NORMALISATIE (MAPPINGS) ---
